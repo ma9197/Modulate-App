@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ContentDialog
+    x:Class="WinUI_App.Dialogs.UploadReportDialog"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:local="using:WinUI_App.Dialogs"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    mc:Ignorable="d"
+    Title="Submit Report"
+    PrimaryButtonText="Submit Report"
+    CloseButtonText="Cancel"
+    DefaultButton="Primary">
+
+    <StackPanel Spacing="16" MinWidth="400">
+        <TextBlock 
+            Text="Description"
+            Style="{StaticResource BodyStrongTextBlockStyle}"/>
+        
+        <TextBox 
+            x:Name="DescriptionTextBox"
+            PlaceholderText="Describe the incident"
+            TextWrapping="Wrap"
+            AcceptsReturn="True"
+            Height="120"/>
+
+        <CheckBox 
+            x:Name="TargetedCheckBox"
+            Content="I was personally targeted"/>
+
+        <TextBlock 
+            Text="Desired Action"
+            Style="{StaticResource BodyStrongTextBlockStyle}"/>
+        
+        <TextBox 
+            x:Name="DesiredActionTextBox"
+            PlaceholderText="What would you like to happen?"
+            TextWrapping="Wrap"
+            Height="80"/>
+    </StackPanel>
+</ContentDialog>
+

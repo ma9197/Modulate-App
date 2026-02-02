@@ -1,0 +1,17 @@
+# Visual Studio / WinUI build output
+.vs/
+**/bin/
+**/obj/
+**/AppPackages/
+
+# User-specific
+*.user
+*.suo
+
+# Local config (contains keys)
+WinUI App/WinUI App/appsettings.json
+
+# Safety: never commit copied configs
+appsettings.json
+
+
