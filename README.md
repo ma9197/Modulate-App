@@ -13,8 +13,8 @@ Create `WinUI App/WinUI App/appsettings.json`:
 
 ```json
 {
-  "SupabaseUrl": "https://YOUR_PROJECT.supabase.co",
-  "SupabaseAnonKey": "YOUR_ANON_KEY",
+  "SupabaseUrl": "https://project-id.supabase.co",
+  "SupabaseAnonKey": "ANON_KEY_HERE",
   "WorkerUrl": "http://localhost:8787"
 }
 ```

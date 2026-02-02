@@ -49,8 +49,8 @@ namespace WinUI_App
                     // Return default config if file doesn't exist
                     return new AppConfig
                     {
-                        SupabaseUrl = "https://YOUR_PROJECT.supabase.co",
-                        SupabaseAnonKey = "YOUR_ANON_KEY_HERE",
+                        SupabaseUrl = "https://project-id.supabase.co",
+                        SupabaseAnonKey = "ANON_KEY_HERE",
                         WorkerUrl = "http://localhost:8787"
                     };
                 }
