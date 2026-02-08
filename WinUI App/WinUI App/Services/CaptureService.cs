@@ -397,6 +397,35 @@ namespace WinUI_App.Services
             return (_tempSystemAudioPath, _tempMicrophonePath, _tempVideoPath);
         }
 
+        /// <summary>
+        /// Save current recording and immediately restart new recording
+        /// </summary>
+        public (string? audioPath, string? micPath, string? videoPath) SaveAndRestartRecording()
+        {
+            if (!_isRecording)
+            {
+                return (null, null, null);
+            }
+
+            // Stop current recording
+            StopRecording();
+
+            // Save file paths before restarting
+            var savedAudioPath = _tempSystemAudioPath;
+            var savedMicPath = _tempMicrophonePath;
+            var savedVideoPath = _tempVideoPath;
+
+            // Clear temp paths so new recording gets new files
+            _tempSystemAudioPath = null;
+            _tempMicrophonePath = null;
+            _tempVideoPath = null;
+
+            // Restart recording immediately
+            _ = StartRecordingAsync();
+
+            return (savedAudioPath, savedMicPath, savedVideoPath);
+        }
+
         public long GetFileSizeBytes(string? path)
         {
             try

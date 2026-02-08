@@ -12,7 +12,14 @@ namespace WinUI_App.Views
         public LoginPage()
         {
             this.InitializeComponent();
-            _authService = new SupabaseAuthService();
+            _authService = App.SharedAuthService ?? new SupabaseAuthService();
+            App.SharedAuthService = _authService;
+            
+            // Check if already logged in
+            if (_authService.IsAuthenticated)
+            {
+                NavigateToMainPage();
+            }
         }
 
         private async void LoginButton_Click(object sender, RoutedEventArgs e)

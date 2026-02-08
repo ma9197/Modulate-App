@@ -116,15 +116,12 @@ namespace WinUI_App.Views
                 return;
             }
 
-            // Stop recording and prepare for upload
+            // Capture the current moment
             _flagTime = DateTime.UtcNow;
-            _captureService.StopRecording();
+            
+            // Save current recording and immediately restart
+            var savedFiles = _captureService.SaveAndRestartRecording();
             _hasPendingReport = true;
-
-            RecordingStatusText.Text = "Recording stopped - ready to submit";
-            StopRecordingButton.IsEnabled = false;
-            FlagEventButton.IsEnabled = false;
-            StartRecordingButton.IsEnabled = false;
 
             // Show upload dialog
             var dialog = new UploadReportDialog
@@ -137,29 +134,38 @@ namespace WinUI_App.Views
             if (result == ContentDialogResult.Primary)
             {
                 // User clicked Submit
-                await SubmitReportAsync(dialog.Description, dialog.Targeted, dialog.DesiredAction);
+                await SubmitReportAsync(dialog.Description, dialog.Targeted, dialog.DesiredAction, savedFiles);
             }
             else
             {
-                // User clicked Cancel
-                CancelUpload();
+                // User clicked Cancel - delete the saved files
+                CancelUpload(savedFiles);
             }
         }
 
-        private void CancelUpload()
+        private void CancelUpload((string? audioPath, string? micPath, string? videoPath) savedFiles)
         {
-            _captureService.CleanupTempFiles();
+            // Delete the saved files
+            try
+            {
+                if (savedFiles.audioPath != null && File.Exists(savedFiles.audioPath))
+                    File.Delete(savedFiles.audioPath);
+                if (savedFiles.micPath != null && File.Exists(savedFiles.micPath))
+                    File.Delete(savedFiles.micPath);
+                if (savedFiles.videoPath != null && File.Exists(savedFiles.videoPath))
+                    File.Delete(savedFiles.videoPath);
+            }
+            catch { }
+
             _hasPendingReport = false;
-
-            StartRecordingButton.IsEnabled = true;
-            RecordingStatusText.Text = "Not recording";
-            RecordingStatusText.Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(
-                Microsoft.UI.Colors.Gray);
-
-            ShowStatus("Upload cancelled.", InfoBarSeverity.Informational);
+            ShowStatus("Upload cancelled. Recording continues.", InfoBarSeverity.Informational);
         }
 
-        private async System.Threading.Tasks.Task SubmitReportAsync(string description, bool targeted, string desiredAction)
+        private async System.Threading.Tasks.Task SubmitReportAsync(
+            string description, 
+            bool targeted, 
+            string desiredAction,
+            (string? audioPath, string? micPath, string? videoPath) savedFiles)
         {
             if (_authService == null || !_authService.IsAuthenticated)
             {
@@ -173,7 +179,7 @@ namespace WinUI_App.Views
 
             try
             {
-                var (systemAudioPath, micPath, videoPath) = _captureService.GetCapturedFiles();
+                var (systemAudioPath, micPath, videoPath) = savedFiles;
 
                 if (string.IsNullOrEmpty(systemAudioPath) || !File.Exists(systemAudioPath))
                 {
@@ -325,27 +331,26 @@ namespace WinUI_App.Views
 
                 if (success)
                 {
-                    ShowStatus($"Report submitted successfully! ID: {reportId}", InfoBarSeverity.Success);
+                    ShowStatus($"Report submitted successfully! ID: {reportId}. Recording continues.", InfoBarSeverity.Success);
                     
-                    // Cleanup
-                    _captureService.CleanupTempFiles();
+                    // Cleanup submitted files
+                    try
+                    {
+                        if (systemAudioPath != null && File.Exists(systemAudioPath))
+                            File.Delete(systemAudioPath);
+                        if (micPath != null && File.Exists(micPath))
+                            File.Delete(micPath);
+                        if (videoPath != null && File.Exists(videoPath))
+                            File.Delete(videoPath);
+                    }
+                    catch { }
+                    
                     _hasPendingReport = false;
-
-                    // Reset UI
-                    StartRecordingButton.IsEnabled = true;
-                    RecordingStatusText.Text = "Not recording";
-                    RecordingStatusText.Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(
-                        Microsoft.UI.Colors.Gray);
                 }
                 else
                 {
                     ShowStatus($"Failed to submit report: {error}", InfoBarSeverity.Error);
-                    
-                    // Re-enable buttons so user can try again
-                    StartRecordingButton.IsEnabled = true;
-                    RecordingStatusText.Text = "Not recording";
-                    RecordingStatusText.Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(
-                        Microsoft.UI.Colors.Gray);
+                    _hasPendingReport = false;
                 }
             }
             catch (Exception ex)

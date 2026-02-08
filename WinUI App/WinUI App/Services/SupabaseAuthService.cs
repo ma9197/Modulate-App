@@ -3,6 +3,7 @@ using System.Net.Http;
 using System.Net.Http.Json;
 using System.Text.Json;
 using System.Threading.Tasks;
+using Windows.Security.Credentials;
 using WinUI_App.Models;
 
 namespace WinUI_App.Services
@@ -15,6 +16,7 @@ namespace WinUI_App.Services
         private readonly HttpClient _httpClient;
         private readonly string _supabaseUrl;
         private readonly string _anonKey;
+        private const string CREDENTIAL_RESOURCE = "ToxicityReporter_Auth";
 
         private string? _accessToken;
         private string? _refreshToken;
@@ -25,6 +27,9 @@ namespace WinUI_App.Services
             _httpClient = new HttpClient();
             _supabaseUrl = AppConfig.Instance.SupabaseUrl;
             _anonKey = AppConfig.Instance.SupabaseAnonKey;
+            
+            // Try to load saved credentials
+            LoadSavedCredentials();
         }
 
         /// <summary>
@@ -74,6 +79,7 @@ namespace WinUI_App.Services
                     _accessToken = authResponse.AccessToken;
                     _refreshToken = authResponse.RefreshToken;
                     _currentUser = authResponse.User;
+                    SaveCredentials();
                     return (true, string.Empty);
                 }
 
@@ -117,6 +123,7 @@ namespace WinUI_App.Services
                     _accessToken = authResponse.AccessToken;
                     _refreshToken = authResponse.RefreshToken;
                     _currentUser = authResponse.User;
+                    SaveCredentials();
                     return (true, string.Empty);
                 }
 
@@ -136,6 +143,71 @@ namespace WinUI_App.Services
             _accessToken = null;
             _refreshToken = null;
             _currentUser = null;
+            ClearSavedCredentials();
+        }
+
+        private void SaveCredentials()
+        {
+            try
+            {
+                var vault = new PasswordVault();
+                
+                // Remove old credential if exists
+                try
+                {
+                    var oldCred = vault.Retrieve(CREDENTIAL_RESOURCE, "auth_data");
+                    vault.Remove(oldCred);
+                }
+                catch { }
+
+                // Save new credential
+                var credentialData = JsonSerializer.Serialize(new
+                {
+                    AccessToken = _accessToken,
+                    RefreshToken = _refreshToken,
+                    User = _currentUser
+                });
+
+                vault.Add(new PasswordCredential(CREDENTIAL_RESOURCE, "auth_data", credentialData));
+            }
+            catch { }
+        }
+
+        private void LoadSavedCredentials()
+        {
+            try
+            {
+                var vault = new PasswordVault();
+                var credential = vault.Retrieve(CREDENTIAL_RESOURCE, "auth_data");
+                credential.RetrievePassword();
+
+                var credentialData = JsonSerializer.Deserialize<SavedCredentials>(credential.Password);
+                if (credentialData != null)
+                {
+                    _accessToken = credentialData.AccessToken;
+                    _refreshToken = credentialData.RefreshToken;
+                    _currentUser = credentialData.User;
+                }
+            }
+            catch { }
+        }
+
+        private void ClearSavedCredentials()
+        {
+            try
+            {
+                var vault = new PasswordVault();
+                var credential = vault.Retrieve(CREDENTIAL_RESOURCE, "auth_data");
+                vault.Remove(credential);
+            }
+            catch { }
+        }
+
+        private class SavedCredentials
+        {
+            public string? AccessToken { get; set; }
+            public string? RefreshToken { get; set; }
+            public SupabaseUser? User { get; set; }
         }
     }
 }
