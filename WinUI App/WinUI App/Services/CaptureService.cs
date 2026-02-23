@@ -20,7 +20,7 @@ namespace WinUI_App.Services
     /// </summary>
     public class CaptureService : IDisposable
     {
-        private const int BUFFER_DURATION_SECONDS = 10;
+        private const int BUFFER_DURATION_SECONDS = 30;
         private const int SAMPLE_RATE = 44100;
         private const int CHANNELS = 2;
 
@@ -29,9 +29,12 @@ namespace WinUI_App.Services
         private WaveInEvent? _microphoneCapture;
         private WaveFileWriter? _systemAudioWriter;
         private WaveFileWriter? _microphoneWriter;
+        private WaveFormat? _systemWaveFormat;
+        private WaveFormat? _microphoneWaveFormat;
 
         // Rolling buffer
         private readonly Queue<AudioSegment> _audioBuffer = new();
+        private readonly Queue<AudioSegment> _microphoneBuffer = new();
         private readonly object _bufferLock = new();
         private DateTime _recordingStartTime;
         private bool _isRecording;
@@ -42,18 +45,18 @@ namespace WinUI_App.Services
         private string? _tempVideoPath;
         
         // Screen recording
-        private AviWriter? _aviWriter;
-        private IAviVideoStream? _videoStream;
         private Thread? _screenRecordThread;
         private bool _stopScreenRecording;
-        private readonly object _videoLock = new();
         private int _framesWritten;
         private string? _lastVideoError;
+        private readonly Queue<VideoFrame> _videoBuffer = new();
+        private readonly object _videoBufferLock = new();
         
         // Full HD 30 FPS requirement
         private const int VIDEO_WIDTH = 1920;
         private const int VIDEO_HEIGHT = 1080;
         private const int VIDEO_FPS = 30;
+        private const int VIDEO_BUFFER_FRAMES = VIDEO_FPS * BUFFER_DURATION_SECONDS;
 
         public bool IsRecording => _isRecording;
         public DateTime RecordingStartTime => _recordingStartTime;
@@ -66,6 +69,11 @@ namespace WinUI_App.Services
         {
             public byte[] Data { get; set; } = Array.Empty<byte>();
             public DateTime Timestamp { get; set; }
+        }
+
+        private class VideoFrame
+        {
+            public byte[] JpegData { get; set; } = Array.Empty<byte>();
         }
 
         // P/Invoke for screen capture
@@ -95,17 +103,18 @@ namespace WinUI_App.Services
 
             try
             {
-                // Create temporary files
+                // Create temporary files with unique timestamp+ID names
                 var tempFolder = ApplicationData.Current.TemporaryFolder;
-                var timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
-                
-                _tempSystemAudioPath = Path.Combine(tempFolder.Path, $"system_audio_{timestamp}.wav");
-                _tempMicrophonePath = Path.Combine(tempFolder.Path, $"microphone_{timestamp}.wav");
-                _tempVideoPath = Path.Combine(tempFolder.Path, $"screen_recording_{timestamp}.avi");
+                var now = DateTime.UtcNow;
+
+                _tempSystemAudioPath = Path.Combine(tempFolder.Path, MediaFileNamer.DesktopAudio(now));
+                _tempMicrophonePath = Path.Combine(tempFolder.Path, MediaFileNamer.MicAudio(now));
+                _tempVideoPath = null;
 
                 // Start system audio capture (loopback)
                 _systemAudioCapture = new WasapiLoopbackCapture();
                 var systemFormat = _systemAudioCapture.WaveFormat;
+                _systemWaveFormat = systemFormat;
                 _systemAudioWriter = new WaveFileWriter(_tempSystemAudioPath, systemFormat);
 
                 _systemAudioCapture.DataAvailable += SystemAudio_DataAvailable;
@@ -126,6 +135,7 @@ namespace WinUI_App.Services
                         BufferMilliseconds = 100
                     };
 
+                    _microphoneWaveFormat = _microphoneCapture.WaveFormat;
                     _microphoneWriter = new WaveFileWriter(_tempMicrophonePath, _microphoneCapture.WaveFormat);
                     _microphoneCapture.DataAvailable += Microphone_DataAvailable;
                     _microphoneCapture.RecordingStopped += (s, e) =>
@@ -145,6 +155,16 @@ namespace WinUI_App.Services
                 // Mark recording as started first (screen thread depends on this state)
                 _recordingStartTime = DateTime.UtcNow;
                 _isRecording = true;
+
+                lock (_bufferLock)
+                {
+                    _audioBuffer.Clear();
+                    _microphoneBuffer.Clear();
+                }
+                lock (_videoBufferLock)
+                {
+                    _videoBuffer.Clear();
+                }
 
                 // Start screen recording (spawns background thread)
                 StartScreenRecording();
@@ -167,19 +187,6 @@ namespace WinUI_App.Services
             {
                 _lastVideoError = null;
                 _framesWritten = 0;
-                lock (_videoLock)
-                {
-                    // Create AVI writer
-                    _aviWriter = new AviWriter(_tempVideoPath!)
-                    {
-                        FramesPerSecond = VIDEO_FPS,
-                        EmitIndex1 = true
-                    };
-
-                    // MJPEG-compressed AVI stream (massively smaller than raw frames, still AVI, playable on Windows/VLC)
-                    // SharpAvi exposes this via SharpAvi.Codecs.EncodingStreamFactory extension methods.
-                    _videoStream = _aviWriter.AddMJpegWpfVideoStream(VIDEO_WIDTH, VIDEO_HEIGHT, quality: 70);
-                }
 
                 _stopScreenRecording = false;
 
@@ -200,23 +207,39 @@ namespace WinUI_App.Services
 
         private void ScreenCaptureLoop()
         {
-            var frameInterval = TimeSpan.FromSeconds(1.0 / VIDEO_FPS);
-            var nextFrameTime = DateTime.Now;
+            var frameIntervalSeconds = 1.0 / VIDEO_FPS;
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            var nextFrameTimeSeconds = 0.0;
+            byte[]? lastFrameJpeg = null;
 
             try
             {
                 // Run until StopRecording() signals stop
                 while (!_stopScreenRecording)
                 {
-                    var now = DateTime.Now;
-                    if (now >= nextFrameTime)
+                    var nowSeconds = stopwatch.Elapsed.TotalSeconds;
+                    if (nowSeconds >= nextFrameTimeSeconds)
                     {
-                        CaptureScreenFrame();
-                        nextFrameTime = now + frameInterval;
+                        var frameJpeg = CaptureScreenFrameJpeg();
+                        if (frameJpeg != null)
+                        {
+                            AddVideoFrameToBuffer(frameJpeg);
+                            lastFrameJpeg = frameJpeg;
+                        }
+
+                        nextFrameTimeSeconds += frameIntervalSeconds;
+                        nowSeconds = stopwatch.Elapsed.TotalSeconds;
+
+                        while (nowSeconds >= nextFrameTimeSeconds && lastFrameJpeg != null)
+                        {
+                            AddVideoFrameToBuffer(lastFrameJpeg);
+                            nextFrameTimeSeconds += frameIntervalSeconds;
+                            nowSeconds = stopwatch.Elapsed.TotalSeconds;
+                        }
                     }
                     else
                     {
-                        Thread.Sleep(10);
+                        Thread.Sleep(1);
                     }
                 }
             }
@@ -226,7 +249,7 @@ namespace WinUI_App.Services
             }
         }
 
-        private void CaptureScreenFrame()
+        private byte[]? CaptureScreenFrameJpeg()
         {
             try
             {
@@ -254,24 +277,37 @@ namespace WinUI_App.Services
                     frameGraphics.DrawImage(screenBitmap, 0, 0, VIDEO_WIDTH, VIDEO_HEIGHT);
                 }
 
-                // Write frame to video stream
-                lock (_videoLock)
-                {
-                    if (_videoStream != null && !_stopScreenRecording)
-                    {
-                        // SharpAvi encoders commonly expect 32bpp source buffers.
-                        // IMPORTANT: handle stride padding (stride may not equal width*4).
-                        var frameData = BitmapToBgr32Tight(frameBitmap);
-                        _videoStream.WriteFrame(true, frameData, 0, frameData.Length);
-                        Interlocked.Increment(ref _framesWritten);
-                    }
-                }
+                return EncodeJpeg(frameBitmap, 70L);
             }
             catch (Exception ex)
             {
                 _lastVideoError = $"Frame capture error: {ex}";
                 System.Diagnostics.Debug.WriteLine(_lastVideoError);
             }
+            return null;
+        }
+
+        private void AddVideoFrameToBuffer(byte[] jpegData)
+        {
+            lock (_videoBufferLock)
+            {
+                _videoBuffer.Enqueue(new VideoFrame { JpegData = jpegData });
+                while (_videoBuffer.Count > VIDEO_BUFFER_FRAMES)
+                {
+                    _videoBuffer.Dequeue();
+                }
+                Interlocked.Increment(ref _framesWritten);
+            }
+        }
+
+        private byte[] EncodeJpeg(Bitmap bitmap, long quality)
+        {
+            using var stream = new MemoryStream();
+            var codec = ImageCodecInfo.GetImageEncoders().First(c => c.MimeType == "image/jpeg");
+            using var encoderParams = new EncoderParameters(1);
+            encoderParams.Param[0] = new EncoderParameter(Encoder.Quality, quality);
+            bitmap.Save(stream, codec, encoderParams);
+            return stream.ToArray();
         }
 
         private byte[] BitmapToBgr32Tight(Bitmap bitmap)
@@ -342,6 +378,28 @@ namespace WinUI_App.Services
             {
                 _microphoneWriter.Write(e.Buffer, 0, e.BytesRecorded);
                 _microphoneWriter.Flush();
+
+                lock (_bufferLock)
+                {
+                    _microphoneBuffer.Enqueue(new AudioSegment
+                    {
+                        Data = e.Buffer.Take(e.BytesRecorded).ToArray(),
+                        Timestamp = DateTime.UtcNow
+                    });
+
+                    while (_microphoneBuffer.Count > 0)
+                    {
+                        var oldest = _microphoneBuffer.Peek();
+                        if ((DateTime.UtcNow - oldest.Timestamp).TotalSeconds > BUFFER_DURATION_SECONDS)
+                        {
+                            _microphoneBuffer.Dequeue();
+                        }
+                        else
+                        {
+                            break;
+                        }
+                    }
+                }
             }
         }
 
@@ -375,14 +433,6 @@ namespace WinUI_App.Services
             _systemAudioCapture?.Dispose();
             _microphoneCapture?.Dispose();
 
-            // Close video writer
-            lock (_videoLock)
-            {
-                _videoStream = null;
-                _aviWriter?.Close();
-                _aviWriter = null;
-            }
-
             _systemAudioWriter = null;
             _microphoneWriter = null;
             _systemAudioCapture = null;
@@ -407,23 +457,153 @@ namespace WinUI_App.Services
                 return (null, null, null);
             }
 
+            var tempFolder = ApplicationData.Current.TemporaryFolder;
+            var now = DateTime.UtcNow;
+            var clipAudioPath = Path.Combine(tempFolder.Path, MediaFileNamer.DesktopAudio(now));
+            var clipMicPath = Path.Combine(tempFolder.Path, MediaFileNamer.MicAudio(now));
+
+            string? savedClipAudioPath = null;
+            string? savedClipMicPath = null;
+
+            if (_systemWaveFormat != null)
+            {
+                savedClipAudioPath = SaveAudioClipFromBuffer(_audioBuffer, _systemWaveFormat, clipAudioPath);
+                if (savedClipAudioPath == null)
+                {
+                    savedClipAudioPath = SaveSilentAudioClip(_systemWaveFormat, clipAudioPath);
+                }
+            }
+
+            if (_microphoneWaveFormat != null)
+            {
+                savedClipMicPath = SaveAudioClipFromBuffer(_microphoneBuffer, _microphoneWaveFormat, clipMicPath);
+            }
+
+            var savedVideoClipPath = SaveVideoClipFromBuffer();
+
+            var fullSystemPath = _tempSystemAudioPath;
+            var fullMicPath = _tempMicrophonePath;
+
             // Stop current recording
             StopRecording();
-
-            // Save file paths before restarting
-            var savedAudioPath = _tempSystemAudioPath;
-            var savedMicPath = _tempMicrophonePath;
-            var savedVideoPath = _tempVideoPath;
 
             // Clear temp paths so new recording gets new files
             _tempSystemAudioPath = null;
             _tempMicrophonePath = null;
             _tempVideoPath = null;
 
+            TryDeleteFile(fullSystemPath);
+            TryDeleteFile(fullMicPath);
+
             // Restart recording immediately
             _ = StartRecordingAsync();
 
-            return (savedAudioPath, savedMicPath, savedVideoPath);
+            return (savedClipAudioPath, savedClipMicPath, savedVideoClipPath);
+        }
+
+        private void TryDeleteFile(string? path)
+        {
+            try
+            {
+                if (!string.IsNullOrEmpty(path) && File.Exists(path))
+                {
+                    File.Delete(path);
+                }
+            }
+            catch
+            {
+            }
+        }
+
+        private string? SaveAudioClipFromBuffer(Queue<AudioSegment> buffer, WaveFormat format, string outputPath)
+        {
+            List<AudioSegment> segments;
+            lock (_bufferLock)
+            {
+                if (buffer.Count == 0)
+                {
+                    return null;
+                }
+                segments = buffer.ToList();
+            }
+
+            using var writer = new WaveFileWriter(outputPath, format);
+            foreach (var segment in segments)
+            {
+                writer.Write(segment.Data, 0, segment.Data.Length);
+            }
+            writer.Flush();
+            return outputPath;
+        }
+
+        private string? SaveSilentAudioClip(WaveFormat format, string outputPath)
+        {
+            try
+            {
+                var durationSeconds = BUFFER_DURATION_SECONDS;
+                var totalBytes = format.AverageBytesPerSecond * durationSeconds;
+                var silence = new byte[totalBytes];
+
+                using var writer = new WaveFileWriter(outputPath, format);
+                writer.Write(silence, 0, silence.Length);
+                writer.Flush();
+                return outputPath;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private string? SaveVideoClipFromBuffer()
+        {
+            List<VideoFrame> frames;
+            lock (_videoBufferLock)
+            {
+                if (_videoBuffer.Count == 0)
+                {
+                    return null;
+                }
+                frames = _videoBuffer.ToList();
+            }
+
+            var tempFolder = ApplicationData.Current.TemporaryFolder;
+            var videoPath = Path.Combine(tempFolder.Path, MediaFileNamer.Video(DateTime.UtcNow));
+
+            try
+            {
+                using var aviWriter = new AviWriter(videoPath)
+                {
+                    FramesPerSecond = VIDEO_FPS,
+                    EmitIndex1 = true
+                };
+
+                var videoStream = aviWriter.AddMJpegWpfVideoStream(VIDEO_WIDTH, VIDEO_HEIGHT, quality: 70);
+
+                foreach (var frame in frames)
+                {
+                    using var jpegStream = new MemoryStream(frame.JpegData);
+                    using var sourceBitmap = new Bitmap(jpegStream);
+                    using var frameBitmap = new Bitmap(VIDEO_WIDTH, VIDEO_HEIGHT, PixelFormat.Format32bppRgb);
+                    using (var g = Graphics.FromImage(frameBitmap))
+                    {
+                        g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBilinear;
+                        g.DrawImage(sourceBitmap, 0, 0, VIDEO_WIDTH, VIDEO_HEIGHT);
+                    }
+
+                    var frameData = BitmapToBgr32Tight(frameBitmap);
+                    videoStream.WriteFrame(true, frameData, 0, frameData.Length);
+                }
+            }
+            catch (Exception ex)
+            {
+                _lastVideoError = $"Video clip write error: {ex}";
+                System.Diagnostics.Debug.WriteLine(_lastVideoError);
+                return null;
+            }
+
+            _tempVideoPath = videoPath;
+            return videoPath;
         }
 
         public long GetFileSizeBytes(string? path)
@@ -481,6 +661,11 @@ namespace WinUI_App.Services
             lock (_bufferLock)
             {
                 _audioBuffer.Clear();
+                _microphoneBuffer.Clear();
+            }
+            lock (_videoBufferLock)
+            {
+                _videoBuffer.Clear();
             }
         }
 

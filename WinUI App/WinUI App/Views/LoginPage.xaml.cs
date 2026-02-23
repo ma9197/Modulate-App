@@ -14,8 +14,12 @@ namespace WinUI_App.Views
             this.InitializeComponent();
             _authService = App.SharedAuthService ?? new SupabaseAuthService();
             App.SharedAuthService = _authService;
-            
-            // Check if already logged in
+            this.Loaded += LoginPage_Loaded;
+        }
+
+        private void LoginPage_Loaded(object sender, RoutedEventArgs e)
+        {
+            // Check if already logged in after the page is loaded
             if (_authService.IsAuthenticated)
             {
                 NavigateToMainPage();
@@ -129,7 +133,10 @@ namespace WinUI_App.Views
         private void NavigateToMainPage()
         {
             // Pass the auth service instance to the main page
-            Frame.Navigate(typeof(MainPage), _authService);
+            if (Frame != null)
+            {
+                Frame.Navigate(typeof(MainPage), _authService);
+            }
         }
     }
 }

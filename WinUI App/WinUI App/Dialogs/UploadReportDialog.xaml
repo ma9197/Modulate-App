@@ -3,40 +3,256 @@
     x:Class="WinUI_App.Dialogs.UploadReportDialog"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:canvas="using:Microsoft.Graphics.Canvas.UI.Xaml"
     xmlns:local="using:WinUI_App.Dialogs"
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     mc:Ignorable="d"
     Title="Submit Report"
     PrimaryButtonText="Submit Report"
+    SecondaryButtonText="Save for later"
     CloseButtonText="Cancel"
-    DefaultButton="Primary">
+    DefaultButton="Primary"
+    FullSizeDesired="False">
 
-    <StackPanel Spacing="16" MinWidth="400">
-        <TextBlock 
-            Text="Description"
-            Style="{StaticResource BodyStrongTextBlockStyle}"/>
-        
-        <TextBox 
-            x:Name="DescriptionTextBox"
-            PlaceholderText="Describe the incident"
-            TextWrapping="Wrap"
-            AcceptsReturn="True"
-            Height="120"/>
+    <ScrollViewer VerticalScrollBarVisibility="Auto" MaxHeight="700">
+    <StackPanel Spacing="{StaticResource SpacingM}" Padding="0,0,0,4">
 
-        <CheckBox 
+        <!-- ── Form fields ────────────────────────────────────────────────── -->
+
+        <StackPanel Spacing="{StaticResource SpacingS}">
+            <TextBlock Text="Game name" Style="{StaticResource BodyTextStyle}" FontWeight="SemiBold"/>
+            <TextBox
+                x:Name="GameNameTextBox"
+                PlaceholderText="Game name"
+                TextWrapping="NoWrap"
+                Height="40"/>
+        </StackPanel>
+
+        <StackPanel Spacing="{StaticResource SpacingS}">
+            <TextBlock Text="Offender name" Style="{StaticResource BodyTextStyle}" FontWeight="SemiBold"/>
+            <TextBox
+                x:Name="OffenderNameTextBox"
+                PlaceholderText="Offender name"
+                TextWrapping="NoWrap"
+                Height="40"/>
+        </StackPanel>
+
+        <StackPanel Spacing="{StaticResource SpacingS}">
+            <TextBlock Text="Description" Style="{StaticResource BodyTextStyle}" FontWeight="SemiBold"/>
+            <TextBox
+                x:Name="DescriptionTextBox"
+                PlaceholderText="Describe the incident"
+                TextWrapping="Wrap"
+                AcceptsReturn="True"
+                Height="120"/>
+        </StackPanel>
+
+        <CheckBox
             x:Name="TargetedCheckBox"
-            Content="I was personally targeted"/>
+            Content="I was personally targeted"
+            Margin="0,8,0,8"/>
 
-        <TextBlock 
-            Text="Desired Action"
-            Style="{StaticResource BodyStrongTextBlockStyle}"/>
-        
-        <TextBox 
-            x:Name="DesiredActionTextBox"
-            PlaceholderText="What would you like to happen?"
-            TextWrapping="Wrap"
-            Height="80"/>
+        <StackPanel Spacing="{StaticResource SpacingS}">
+            <TextBlock Text="Desired action" Style="{StaticResource BodyTextStyle}" FontWeight="SemiBold"/>
+            <TextBox
+                x:Name="DesiredActionTextBox"
+                PlaceholderText="What would you like to happen?"
+                TextWrapping="Wrap"
+                AcceptsReturn="True"
+                Height="120"/>
+        </StackPanel>
+
+        <!-- ── Clip summary row ───────────────────────────────────────────── -->
+        <Border
+            Background="{StaticResource SurfaceElevatedBrush}"
+            CornerRadius="8"
+            Padding="14,12">
+            <StackPanel Spacing="10">
+                <StackPanel Spacing="2">
+                    <TextBlock
+                        Text="Clip selection"
+                        Style="{StaticResource MetadataTextStyle}"
+                        Foreground="{StaticResource SecondaryTextBrush}"/>
+                    <TextBlock
+                        x:Name="ClipSummaryText"
+                        Text="Last 10 seconds (default)"
+                        Style="{StaticResource BodyTextStyle}"
+                        FontWeight="SemiBold"/>
+                </StackPanel>
+
+                <Button
+                    x:Name="EditClipButton"
+                    Content="✂  Edit clip"
+                    Style="{StaticResource SecondaryButtonStyle}"
+                    Height="36"
+                    Padding="16,0"
+                    HorizontalAlignment="Left"
+                    IsEnabled="False"
+                    Click="EditClipButton_Click"/>
+            </StackPanel>
+        </Border>
+
+        <!-- ── Inline trimmer panel (initially hidden) ───────────────────── -->
+        <Border
+            x:Name="TrimmerPanel"
+            Background="{StaticResource SurfaceElevatedBrush}"
+            CornerRadius="8"
+            Padding="14,12"
+            Visibility="Collapsed">
+
+            <StackPanel Spacing="12">
+
+                <!-- Loading state -->
+                <StackPanel
+                    x:Name="TrimmerLoadingPanel"
+                    Orientation="Horizontal"
+                    Spacing="10"
+                    HorizontalAlignment="Center"
+                    Margin="0,8">
+                    <ProgressRing IsActive="True" Width="24" Height="24"/>
+                    <TextBlock
+                        Text="Loading audio waveform…"
+                        Style="{StaticResource BodyTextStyle}"
+                        Foreground="{StaticResource SecondaryTextBrush}"
+                        VerticalAlignment="Center"/>
+                </StackPanel>
+
+                <!-- Waveform area (hidden while loading) -->
+                <StackPanel x:Name="TrimmerContentPanel" Spacing="8" Visibility="Collapsed">
+
+                    <TextBlock
+                        Text="Drag the handles to select the clip region. Click the waveform to seek."
+                        Style="{StaticResource MetadataTextStyle}"
+                        Foreground="{StaticResource SecondaryTextBrush}"/>
+
+                    <!-- Win2D canvas -->
+                    <Border Background="#1A1A2E" CornerRadius="6" Padding="0">
+                        <canvas:CanvasControl
+                            x:Name="WaveformCanvas"
+                            Height="90"
+                            Draw="WaveformCanvas_Draw"
+                            PointerPressed="WaveformCanvas_PointerPressed"
+                            PointerMoved="WaveformCanvas_PointerMoved"
+                            PointerReleased="WaveformCanvas_PointerReleased"
+                            PointerCaptureLost="WaveformCanvas_PointerCaptureLost"/>
+                    </Border>
+
+                    <!-- Time ruler -->
+                    <Grid Margin="0,-4,0,0">
+                        <TextBlock
+                            x:Name="RulerStart"
+                            Text="0:00"
+                            Style="{StaticResource MetadataTextStyle}"
+                            Foreground="{StaticResource SecondaryTextBrush}"
+                            HorizontalAlignment="Left"/>
+                        <TextBlock
+                            x:Name="RulerMid"
+                            Text="0:15"
+                            Style="{StaticResource MetadataTextStyle}"
+                            Foreground="{StaticResource SecondaryTextBrush}"
+                            HorizontalAlignment="Center"/>
+                        <TextBlock
+                            x:Name="RulerEnd"
+                            Text="0:30"
+                            Style="{StaticResource MetadataTextStyle}"
+                            Foreground="{StaticResource SecondaryTextBrush}"
+                            HorizontalAlignment="Right"/>
+                    </Grid>
+
+                    <!-- Transport controls -->
+                    <StackPanel Spacing="8">
+
+                        <!-- Row 1: play button + position -->
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+
+                            <Button
+                                x:Name="PlayPauseButton"
+                                Grid.Column="0"
+                                Width="36"
+                                Height="36"
+                                Padding="0"
+                                CornerRadius="18"
+                                Style="{StaticResource SecondaryButtonStyle}"
+                                Click="PlayPauseButton_Click">
+                                <FontIcon x:Name="PlayPauseIcon" Glyph="&#xE768;" FontSize="14"/>
+                            </Button>
+
+                            <StackPanel
+                                Grid.Column="1"
+                                Orientation="Horizontal"
+                                HorizontalAlignment="Center"
+                                VerticalAlignment="Center"
+                                Spacing="8">
+                                <TextBlock
+                                    x:Name="PositionLabel"
+                                    Text="0:00.0"
+                                    Style="{StaticResource MetadataTextStyle}"/>
+                                <TextBlock
+                                    Text="/"
+                                    Style="{StaticResource MetadataTextStyle}"
+                                    Foreground="{StaticResource SecondaryTextBrush}"/>
+                                <TextBlock
+                                    x:Name="DurationLabel"
+                                    Text="0:30.0"
+                                    Style="{StaticResource MetadataTextStyle}"
+                                    Foreground="{StaticResource SecondaryTextBrush}"/>
+                            </StackPanel>
+                        </Grid>
+
+                        <!-- Row 2: selection badge -->
+                        <Border
+                            Background="{ThemeResource SystemControlHighlightAccentBrush}"
+                            CornerRadius="6"
+                            Padding="10,4"
+                            HorizontalAlignment="Left">
+                            <TextBlock
+                                x:Name="SelectionLabel"
+                                Text="Selected: 10.0 s"
+                                Style="{StaticResource MetadataTextStyle}"
+                                FontWeight="SemiBold"/>
+                        </Border>
+
+                    </StackPanel>
+
+                    <!-- Start / End labels -->
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Grid.Column="0" Spacing="2">
+                            <TextBlock
+                                Text="Start"
+                                Style="{StaticResource MetadataTextStyle}"
+                                Foreground="{StaticResource SecondaryTextBrush}"/>
+                            <TextBlock
+                                x:Name="StartTimeLabel"
+                                Text="0:20.0"
+                                Style="{StaticResource BodyTextStyle}"
+                                FontWeight="SemiBold"/>
+                        </StackPanel>
+                        <StackPanel Grid.Column="1" Spacing="2" HorizontalAlignment="Right">
+                            <TextBlock
+                                Text="End"
+                                Style="{StaticResource MetadataTextStyle}"
+                                Foreground="{StaticResource SecondaryTextBrush}"/>
+                            <TextBlock
+                                x:Name="EndTimeLabel"
+                                Text="0:30.0"
+                                Style="{StaticResource BodyTextStyle}"
+                                FontWeight="SemiBold"/>
+                        </StackPanel>
+                    </Grid>
+
+                </StackPanel>
+            </StackPanel>
+        </Border>
+
     </StackPanel>
+    </ScrollViewer>
 </ContentDialog>
-

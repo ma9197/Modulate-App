@@ -7,6 +7,12 @@ namespace WinUI_App.Models
     /// </summary>
     public class CreateReportRequest
     {
+        [JsonPropertyName("game_name")]
+        public string? GameName { get; set; }
+
+        [JsonPropertyName("offender_name")]
+        public string? OffenderName { get; set; }
+
         [JsonPropertyName("description")]
         public string? Description { get; set; }
 
@@ -84,6 +90,12 @@ namespace WinUI_App.Models
     {
         [JsonPropertyName("report_id")]
         public string ReportId { get; set; } = string.Empty;
+
+        [JsonPropertyName("game_name")]
+        public string? GameName { get; set; }
+
+        [JsonPropertyName("offender_name")]
+        public string? OffenderName { get; set; }
 
         [JsonPropertyName("description")]
         public string? Description { get; set; }

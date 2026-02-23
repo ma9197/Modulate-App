@@ -10,7 +10,125 @@
                 <XamlControlsResources xmlns="using:Microsoft.UI.Xaml.Controls" />
                 <!-- Other merged dictionaries here -->
             </ResourceDictionary.MergedDictionaries>
-            <!-- Other app resources here -->
+
+            <!--
+              Design system
+              - Spacing scale: 8 / 16 / 24 / 32
+              - Surfaces: #121212 / #1E1E1E / #252525
+              - Typography hierarchy + secondary text (60% white)
+              - Buttons (primary / secondary / danger outline)
+            -->
+
+            <!-- Colors / Brushes -->
+            <Color x:Key="AppBackgroundColor">#FF121212</Color>
+            <Color x:Key="SurfaceColor">#FF1E1E1E</Color>
+            <Color x:Key="SurfaceElevatedColor">#FF252525</Color>
+            <Color x:Key="DangerColor">#FFE15252</Color>
+
+            <SolidColorBrush x:Key="AppBackgroundBrush" Color="{StaticResource AppBackgroundColor}" />
+            <SolidColorBrush x:Key="SurfaceBrush" Color="{StaticResource SurfaceColor}" />
+            <SolidColorBrush x:Key="SurfaceElevatedBrush" Color="{StaticResource SurfaceElevatedColor}" />
+            <SolidColorBrush x:Key="SecondaryTextBrush" Color="White" Opacity="0.6" />
+            <SolidColorBrush x:Key="BorderSubtleBrush" Color="White" Opacity="0.12" />
+            <SolidColorBrush x:Key="DangerBrush" Color="{StaticResource DangerColor}" />
+            <SolidColorBrush x:Key="DangerHoverBrush" Color="{StaticResource DangerColor}" Opacity="0.14" />
+            <SolidColorBrush x:Key="DangerPressedBrush" Color="{StaticResource DangerColor}" Opacity="0.22" />
+            <SolidColorBrush x:Key="SuccessBrush" Color="#FF3DDC97" />
+            <SolidColorBrush x:Key="WarningBrush" Color="#FFF8D46C" />
+            <SolidColorBrush x:Key="SurfaceHoverBrush" Color="White" Opacity="0.06" />
+            <SolidColorBrush x:Key="SurfacePressedBrush" Color="White" Opacity="0.10" />
+
+            <!-- Spacing -->
+            <x:Double x:Key="SpacingS">8</x:Double>
+            <x:Double x:Key="SpacingM">16</x:Double>
+            <x:Double x:Key="SpacingL">24</x:Double>
+            <x:Double x:Key="SpacingXL">32</x:Double>
+
+            <Thickness x:Key="PadS">8</Thickness>
+            <Thickness x:Key="PadM">16</Thickness>
+            <Thickness x:Key="PadL">24</Thickness>
+            <Thickness x:Key="PadXL">32</Thickness>
+
+            <CornerRadius x:Key="RadiusCard">12</CornerRadius>
+            <CornerRadius x:Key="RadiusButton">8</CornerRadius>
+
+            <!-- Typography -->
+            <Style x:Key="AppTitleTextStyle" TargetType="TextBlock">
+                <Setter Property="FontSize" Value="28"/>
+                <Setter Property="FontWeight" Value="SemiBold"/>
+                <Setter Property="TextWrapping" Value="Wrap"/>
+            </Style>
+
+            <Style x:Key="SectionTitleTextStyle" TargetType="TextBlock">
+                <Setter Property="FontSize" Value="20"/>
+                <Setter Property="FontWeight" Value="SemiBold"/>
+                <Setter Property="TextWrapping" Value="Wrap"/>
+            </Style>
+
+            <Style x:Key="CardTitleTextStyle" TargetType="TextBlock">
+                <Setter Property="FontSize" Value="16"/>
+                <Setter Property="FontWeight" Value="Medium"/>
+                <Setter Property="TextWrapping" Value="Wrap"/>
+            </Style>
+
+            <Style x:Key="BodyTextStyle" TargetType="TextBlock">
+                <Setter Property="FontSize" Value="14"/>
+                <Setter Property="FontWeight" Value="Normal"/>
+                <Setter Property="TextWrapping" Value="Wrap"/>
+            </Style>
+
+            <Style x:Key="MetadataTextStyle" TargetType="TextBlock">
+                <Setter Property="FontSize" Value="12"/>
+                <Setter Property="FontWeight" Value="Normal"/>
+                <Setter Property="Foreground" Value="{StaticResource SecondaryTextBrush}"/>
+                <Setter Property="TextWrapping" Value="NoWrap"/>
+            </Style>
+
+            <!-- Card container -->
+            <Style x:Key="CardBorderStyle" TargetType="Border">
+                <Setter Property="Background" Value="{StaticResource SurfaceElevatedBrush}"/>
+                <Setter Property="BorderBrush" Value="{StaticResource BorderSubtleBrush}"/>
+                <Setter Property="BorderThickness" Value="1"/>
+                <Setter Property="CornerRadius" Value="{StaticResource RadiusCard}"/>
+                <Setter Property="Padding" Value="{StaticResource PadL}"/>
+            </Style>
+
+            <!-- Buttons -->
+            <Style x:Key="PrimaryButtonStyle" TargetType="Button" BasedOn="{StaticResource DefaultButtonStyle}">
+                <Setter Property="CornerRadius" Value="{StaticResource RadiusButton}"/>
+                <Setter Property="Height" Value="40"/>
+                <Setter Property="FontWeight" Value="SemiBold"/>
+                <Setter Property="HorizontalAlignment" Value="Stretch"/>
+                <Setter Property="Padding" Value="14,0"/>
+                <Setter Property="Background" Value="{ThemeResource SystemControlHighlightAccentBrush}"/>
+                <Setter Property="BorderBrush" Value="{ThemeResource SystemControlHighlightAccentBrush}"/>
+                <Setter Property="BorderThickness" Value="1"/>
+            </Style>
+
+            <Style x:Key="SecondaryButtonStyle" TargetType="Button" BasedOn="{StaticResource DefaultButtonStyle}">
+                <Setter Property="CornerRadius" Value="{StaticResource RadiusButton}"/>
+                <Setter Property="Height" Value="40"/>
+                <Setter Property="FontWeight" Value="SemiBold"/>
+                <Setter Property="HorizontalAlignment" Value="Stretch"/>
+                <Setter Property="Padding" Value="14,0"/>
+                <Setter Property="Background" Value="Transparent"/>
+                <Setter Property="BorderBrush" Value="{StaticResource BorderSubtleBrush}"/>
+                <Setter Property="BorderThickness" Value="1"/>
+            </Style>
+
+            <Style x:Key="DangerOutlineButtonStyle" TargetType="Button" BasedOn="{StaticResource DefaultButtonStyle}">
+                <Setter Property="CornerRadius" Value="{StaticResource RadiusButton}"/>
+                <Setter Property="Height" Value="40"/>
+                <Setter Property="FontWeight" Value="SemiBold"/>
+                <Setter Property="HorizontalAlignment" Value="Stretch"/>
+                <Setter Property="Padding" Value="14,0"/>
+                <Setter Property="Background" Value="Transparent"/>
+                <Setter Property="BorderBrush" Value="{StaticResource DangerBrush}"/>
+                <Setter Property="Foreground" Value="{StaticResource DangerBrush}"/>
+                <Setter Property="BorderThickness" Value="1"/>
+            </Style>
+
+            <!-- (ListView styling is handled per-view to avoid relying on theme resource keys.) -->
         </ResourceDictionary>
     </Application.Resources>
 </Application>

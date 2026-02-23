@@ -146,6 +146,46 @@ namespace WinUI_App.Services
             ClearSavedCredentials();
         }
 
+        public async Task<(bool success, string error)> RefreshSessionAsync()
+        {
+            if (string.IsNullOrEmpty(_refreshToken))
+            {
+                return (false, "Missing refresh token");
+            }
+
+            try
+            {
+                var httpRequest = new HttpRequestMessage(HttpMethod.Post, $"{_supabaseUrl}/auth/v1/token?grant_type=refresh_token");
+                httpRequest.Headers.Add("apikey", _anonKey);
+                httpRequest.Content = JsonContent.Create(new { refresh_token = _refreshToken });
+
+                var response = await _httpClient.SendAsync(httpRequest);
+                var responseContent = await response.Content.ReadAsStringAsync();
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    var error = JsonSerializer.Deserialize<SupabaseErrorResponse>(responseContent);
+                    return (false, error?.ErrorDescription ?? error?.Message ?? "Refresh failed");
+                }
+
+                var authResponse = JsonSerializer.Deserialize<AuthResponse>(responseContent);
+                if (authResponse != null)
+                {
+                    _accessToken = authResponse.AccessToken;
+                    _refreshToken = authResponse.RefreshToken;
+                    _currentUser = authResponse.User;
+                    SaveCredentials();
+                    return (true, string.Empty);
+                }
+
+                return (false, "Invalid refresh response");
+            }
+            catch (Exception ex)
+            {
+                return (false, $"Network error: {ex.Message}");
+            }
+        }
+
         private void SaveCredentials()
         {
             try

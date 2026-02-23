@@ -7,126 +7,334 @@
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     mc:Ignorable="d"
-    Background="{ThemeResource ApplicationPageBackgroundThemeBrush}">
+    Background="{StaticResource AppBackgroundBrush}">
 
-    <Grid>
-        <Grid.RowDefinitions>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="*"/>
-        </Grid.RowDefinitions>
+    <Grid x:Name="ShadowReceiver" Background="{StaticResource AppBackgroundBrush}">
+        <NavigationView
+            x:Name="RootNav"
+            PaneDisplayMode="Left"
+            IsBackButtonVisible="Collapsed"
+            IsSettingsVisible="False"
+            AlwaysShowHeader="True"
+            Background="{StaticResource AppBackgroundBrush}"
+            SelectionChanged="RootNav_SelectionChanged">
 
-        <!-- Header -->
-        <Grid Grid.Row="0" Padding="40,40,40,20" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="*"/>
-                <ColumnDefinition Width="Auto"/>
-            </Grid.ColumnDefinitions>
+            <NavigationView.MenuItems>
+                <NavigationViewItem Content="Record" Tag="record">
+                    <NavigationViewItem.Icon>
+                        <SymbolIcon Symbol="Microphone" />
+                    </NavigationViewItem.Icon>
+                </NavigationViewItem>
+                <NavigationViewItem Content="Pending reports" Tag="pending">
+                    <NavigationViewItem.Icon>
+                        <SymbolIcon Symbol="Clock" />
+                    </NavigationViewItem.Icon>
+                </NavigationViewItem>
+                <NavigationViewItem Content="Settings" Tag="settings">
+                    <NavigationViewItem.Icon>
+                        <SymbolIcon Symbol="Setting" />
+                    </NavigationViewItem.Icon>
+                </NavigationViewItem>
+            </NavigationView.MenuItems>
 
-            <StackPanel Grid.Column="0">
-                <TextBlock 
-                    Text="Toxicity Reporter" 
-                    Style="{StaticResource TitleTextBlockStyle}"/>
-                <TextBlock 
-                    x:Name="UserEmailText"
-                    Text="Logged in as: user@example.com" 
-                    Style="{StaticResource BodyTextBlockStyle}"
-                    Foreground="{ThemeResource SystemControlForegroundBaseMediumBrush}"
-                    Margin="0,4,0,0"/>
-            </StackPanel>
-
-            <Button 
-                Grid.Column="1"
-                Content="Log Out"
-                Click="LogoutButton_Click"
-                VerticalAlignment="Center"/>
-        </Grid>
-
-        <!-- Main Content -->
-        <Grid Grid.Row="1" Padding="40">
-            <Grid.RowDefinitions>
-                <RowDefinition Height="Auto"/>
-                <RowDefinition Height="Auto"/>
-            </Grid.RowDefinitions>
-
-            <!-- Status Message -->
-            <InfoBar
-                Grid.Row="0"
-                x:Name="StatusBar"
-                IsOpen="False"
-                IsClosable="True"
-                Margin="0,0,0,16"/>
-
-            <!-- Recording Controls -->
-            <StackPanel 
-                Grid.Row="1"
-                Spacing="16"
-                Padding="24"
-                Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
-                CornerRadius="8"
-                MaxWidth="800"
-                HorizontalAlignment="Center">
-                
-                <TextBlock 
-                    Text="Recording Controls" 
-                    Style="{StaticResource SubtitleTextBlockStyle}"/>
-                
-                <TextBlock 
-                    x:Name="RecordingStatusText"
-                    Text="Not recording"
-                    Style="{StaticResource BodyTextBlockStyle}"
-                    Foreground="{ThemeResource SystemControlForegroundBaseMediumBrush}"/>
-
-                <Grid>
+            <NavigationView.Header>
+                <Grid Margin="{StaticResource PadXL}">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*"/>
-                        <ColumnDefinition Width="16"/>
-                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
                     </Grid.ColumnDefinitions>
 
-                    <Button 
-                        Grid.Column="0"
-                        x:Name="StartRecordingButton"
-                        Content="Start Recording"
-                        HorizontalAlignment="Stretch"
-                        Style="{StaticResource AccentButtonStyle}"
-                        Click="StartRecordingButton_Click"
-                        Padding="12,8"/>
+                    <StackPanel Grid.Column="0" Spacing="4">
+                        <TextBlock Text="Toxicity Reporter" Style="{StaticResource AppTitleTextStyle}"/>
+                        <TextBlock
+                            x:Name="UserEmailText"
+                            Text="Logged in as: user@example.com"
+                            Style="{StaticResource BodyTextStyle}"
+                            Foreground="{StaticResource SecondaryTextBrush}"/>
+                    </StackPanel>
 
-                    <Button 
-                        Grid.Column="2"
-                        x:Name="StopRecordingButton"
-                        Content="Stop Recording"
-                        HorizontalAlignment="Stretch"
-                        Click="StopRecordingButton_Click"
-                        Padding="12,8"
-                        IsEnabled="False"/>
+                    <Button
+                        Grid.Column="1"
+                        Content="Log Out"
+                        Click="LogoutButton_Click"
+                        Style="{StaticResource SecondaryButtonStyle}"
+                        HorizontalAlignment="Right"
+                        VerticalAlignment="Center"
+                        Width="120"/>
                 </Grid>
+            </NavigationView.Header>
 
-                <Button 
-                    x:Name="FlagEventButton"
-                    Content="Flag Event &amp; Upload (F9)"
-                    HorizontalAlignment="Stretch"
-                    Click="FlagEventButton_Click"
-                    Padding="12,8"
-                    IsEnabled="False"/>
+            <NavigationView.Content>
+                <Grid>
+                    <!-- Record view -->
+                    <ScrollViewer x:Name="RecordScroll" VerticalScrollBarVisibility="Auto">
+                        <StackPanel
+                            Margin="{StaticResource PadXL}"
+                            Spacing="{StaticResource SpacingXL}"
+                            MaxWidth="860"
+                            HorizontalAlignment="Left">
 
-                <ProgressRing 
-                    x:Name="LoadingRing"
-                    IsActive="False"
-                    Width="40"
-                    Height="40"
-                    HorizontalAlignment="Center"/>
+                            <TextBlock Text="Record" Style="{StaticResource SectionTitleTextStyle}"/>
 
-                <ProgressBar
-                    x:Name="UploadProgressBar"
-                    Minimum="0"
-                    Maximum="100"
-                    Value="0"
-                    Visibility="Collapsed"
-                    Height="6"
-                    HorizontalAlignment="Stretch"/>
-            </StackPanel>
-        </Grid>
+                            <Border x:Name="RecordCard" Style="{StaticResource CardBorderStyle}" Translation="0,0,8">
+                                <Border.Shadow>
+                                    <ThemeShadow />
+                                </Border.Shadow>
+                                <StackPanel Spacing="{StaticResource SpacingM}">
+                                    <TextBlock Text="Recording controls" Style="{StaticResource CardTitleTextStyle}"/>
+
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="16"/>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+
+                                        <Ellipse
+                                            x:Name="RecordingDot"
+                                            Grid.Column="0"
+                                            Width="10"
+                                            Height="10"
+                                            Fill="{StaticResource SecondaryTextBrush}"
+                                            VerticalAlignment="Center"/>
+
+                                        <StackPanel Grid.Column="2" Spacing="2">
+                                            <TextBlock
+                                                x:Name="RecordingStatusText"
+                                                Text="Not recording"
+                                                Style="{StaticResource BodyTextStyle}"/>
+                                            <TextBlock
+                                                x:Name="RecordingTimerText"
+                                                Text="00:00:00"
+                                                Style="{StaticResource MetadataTextStyle}"/>
+                                        </StackPanel>
+
+                                        <TextBlock
+                                            x:Name="RecordingHintText"
+                                            Grid.Column="3"
+                                            Text=""
+                                            Style="{StaticResource MetadataTextStyle}"
+                                            Margin="16,0,0,0"
+                                            VerticalAlignment="Center"/>
+                                    </Grid>
+
+                                    <Button
+                                        x:Name="RecordToggleButton"
+                                        Content="Start Recording"
+                                        Style="{StaticResource PrimaryButtonStyle}"
+                                        Click="RecordToggleButton_Click"/>
+
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="16"/>
+                                            <ColumnDefinition Width="*"/>
+                                        </Grid.ColumnDefinitions>
+
+                                        <Button
+                                            x:Name="FlagForLaterButton"
+                                            Grid.Column="0"
+                                            Content="Flag"
+                                            Style="{StaticResource SecondaryButtonStyle}"
+                                            Click="FlagForLaterButton_Click"
+                                            IsEnabled="False"/>
+
+                                        <Button
+                                            x:Name="ReportNowButton"
+                                            Grid.Column="2"
+                                            Content="Report now"
+                                            Style="{StaticResource SecondaryButtonStyle}"
+                                            Click="ReportNowButton_Click"
+                                            IsEnabled="False"/>
+                                    </Grid>
+
+                                    <ProgressRing
+                                        x:Name="LoadingRing"
+                                        IsActive="False"
+                                        Width="32"
+                                        Height="32"
+                                        HorizontalAlignment="Left"/>
+
+                                    <ProgressBar
+                                        x:Name="UploadProgressBar"
+                                        Minimum="0"
+                                        Maximum="100"
+                                        Value="0"
+                                        Visibility="Collapsed"
+                                        Height="6"
+                                        HorizontalAlignment="Stretch"/>
+
+                                    <Button
+                                        x:Name="OpenReportsFolderButton"
+                                        Content="Open Reports Folder"
+                                        Style="{StaticResource SecondaryButtonStyle}"
+                                        Click="OpenReportsFolderButton_Click"/>
+                                </StackPanel>
+                            </Border>
+                        </StackPanel>
+                    </ScrollViewer>
+
+                    <!-- Pending view -->
+                    <ScrollViewer x:Name="PendingScroll" VerticalScrollBarVisibility="Auto" Visibility="Collapsed" Opacity="0">
+                        <StackPanel
+                            Margin="{StaticResource PadXL}"
+                            Spacing="{StaticResource SpacingXL}"
+                            MaxWidth="860"
+                            HorizontalAlignment="Left">
+
+                            <TextBlock Text="Pending reports" Style="{StaticResource SectionTitleTextStyle}"/>
+
+                            <Border x:Name="PendingCard" Style="{StaticResource CardBorderStyle}" Translation="0,0,8">
+                                <Border.Shadow>
+                                    <ThemeShadow />
+                                </Border.Shadow>
+                                <StackPanel Spacing="{StaticResource SpacingM}">
+                                    <TextBlock
+                                        x:Name="PendingEmptyText"
+                                        Text="No pending reports"
+                                        Style="{StaticResource BodyTextStyle}"
+                                        Foreground="{StaticResource SecondaryTextBrush}"
+                                        Visibility="Collapsed"/>
+
+                                    <ListView
+                                        x:Name="PendingReportsListView"
+                                        IsItemClickEnabled="True"
+                                        ItemClick="PendingReportsListView_ItemClick"
+                                        Background="Transparent"
+                                        BorderThickness="0">
+                                        <ListView.ItemTemplate>
+                                            <DataTemplate>
+                                                <Border CornerRadius="10" Padding="12" Margin="0,0,0,8" Background="{StaticResource SurfaceBrush}">
+                                                    <Grid>
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="2"/>
+                                                            <ColumnDefinition Width="12"/>
+                                                            <ColumnDefinition Width="*"/>
+                                                            <ColumnDefinition Width="Auto"/>
+                                                        </Grid.ColumnDefinitions>
+
+                                                        <Border Grid.Column="0" Background="{ThemeResource SystemControlHighlightAccentBrush}" CornerRadius="1"/>
+
+                                                        <StackPanel Grid.Column="2" Spacing="2">
+                                                            <TextBlock Text="{Binding DisplayTitle}" Style="{StaticResource CardTitleTextStyle}"/>
+                                                            <TextBlock Text="{Binding DisplayDetails}" Style="{StaticResource BodyTextStyle}" Foreground="{StaticResource SecondaryTextBrush}"/>
+                                                            <TextBlock Text="{Binding DisplayTime}" Style="{StaticResource MetadataTextStyle}"/>
+                                                        </StackPanel>
+
+                                                        <Button
+                                                            Grid.Column="3"
+                                                            Width="32"
+                                                            Height="32"
+                                                            Padding="0"
+                                                            HorizontalAlignment="Right"
+                                                            VerticalAlignment="Center"
+                                                            Background="Transparent"
+                                                            BorderThickness="0">
+                                                            <FontIcon Glyph="&#xE712;" FontSize="16" Foreground="{StaticResource SecondaryTextBrush}"/>
+                                                            <Button.Flyout>
+                                                                <MenuFlyout>
+                                                                    <MenuFlyoutItem Text="Open" Click="PendingItem_Open_Click" CommandParameter="{Binding}"/>
+                                                                    <MenuFlyoutItem Text="Remove" Click="PendingItem_Remove_Click" CommandParameter="{Binding}"/>
+                                                                </MenuFlyout>
+                                                            </Button.Flyout>
+                                                        </Button>
+                                                    </Grid>
+                                                </Border>
+                                            </DataTemplate>
+                                        </ListView.ItemTemplate>
+                                    </ListView>
+                                </StackPanel>
+                            </Border>
+                        </StackPanel>
+                    </ScrollViewer>
+
+                    <!-- Settings view -->
+                    <ScrollViewer x:Name="SettingsScroll" VerticalScrollBarVisibility="Auto" Visibility="Collapsed" Opacity="0">
+                        <StackPanel
+                            Margin="{StaticResource PadXL}"
+                            Spacing="{StaticResource SpacingXL}"
+                            MaxWidth="860"
+                            HorizontalAlignment="Left">
+
+                            <TextBlock Text="Settings" Style="{StaticResource SectionTitleTextStyle}"/>
+
+                            <Border x:Name="SettingsCard" Style="{StaticResource CardBorderStyle}" Translation="0,0,8">
+                                <Border.Shadow>
+                                    <ThemeShadow />
+                                </Border.Shadow>
+                                <StackPanel Spacing="{StaticResource SpacingM}">
+                                    <TextBlock Text="System tray" Style="{StaticResource CardTitleTextStyle}"/>
+
+                                    <ToggleSwitch
+                                        x:Name="MinimizeToTrayToggle"
+                                        Header="Minimize to tray"
+                                        Toggled="MinimizeToTrayToggle_Toggled" />
+
+                                    <ToggleSwitch
+                                        x:Name="CloseExitsToggle"
+                                        Header="Close button exits app"
+                                        Toggled="CloseExitsToggle_Toggled" />
+
+                                    <TextBlock Text="Hotkeys" Style="{StaticResource CardTitleTextStyle}" Margin="0,8,0,0"/>
+
+                                    <Grid RowSpacing="{StaticResource SpacingS}" ColumnSpacing="{StaticResource SpacingM}">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="220"/>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="120"/>
+                                        </Grid.ColumnDefinitions>
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="Auto"/>
+                                            <RowDefinition Height="Auto"/>
+                                            <RowDefinition Height="Auto"/>
+                                        </Grid.RowDefinitions>
+
+                                        <TextBlock Grid.Row="0" Grid.Column="0" Text="Start/Stop recording" Style="{StaticResource BodyTextStyle}" />
+                                        <TextBlock Grid.Row="0" Grid.Column="1" x:Name="HotkeyStartStopText" Style="{StaticResource BodyTextStyle}" Foreground="{StaticResource SecondaryTextBrush}" />
+                                        <Button Grid.Row="0" Grid.Column="2" Content="Change" Style="{StaticResource SecondaryButtonStyle}" Click="ChangeStartStopHotkey_Click"/>
+
+                                        <TextBlock Grid.Row="1" Grid.Column="0" Text="Flag" Style="{StaticResource BodyTextStyle}" />
+                                        <TextBlock Grid.Row="1" Grid.Column="1" x:Name="HotkeyFlagText" Style="{StaticResource BodyTextStyle}" Foreground="{StaticResource SecondaryTextBrush}" />
+                                        <Button Grid.Row="1" Grid.Column="2" Content="Change" Style="{StaticResource SecondaryButtonStyle}" Click="ChangeFlagHotkey_Click"/>
+
+                                        <TextBlock Grid.Row="2" Grid.Column="0" Text="Open app (optional)" Style="{StaticResource BodyTextStyle}" />
+                                        <TextBlock Grid.Row="2" Grid.Column="1" x:Name="HotkeyOpenAppText" Style="{StaticResource BodyTextStyle}" Foreground="{StaticResource SecondaryTextBrush}" />
+                                        <Button Grid.Row="2" Grid.Column="2" Content="Change" Style="{StaticResource SecondaryButtonStyle}" Click="ChangeOpenAppHotkey_Click"/>
+                                    </Grid>
+                                </StackPanel>
+                            </Border>
+                        </StackPanel>
+                    </ScrollViewer>
+
+                    <!-- Snackbar / toast (bottom-left) -->
+                    <Border
+                        x:Name="SnackbarHost"
+                        Visibility="Collapsed"
+                        Opacity="0"
+                        HorizontalAlignment="Left"
+                        VerticalAlignment="Bottom"
+                        Margin="{StaticResource PadL}"
+                        Background="{StaticResource SurfaceElevatedBrush}"
+                        BorderBrush="{StaticResource BorderSubtleBrush}"
+                        BorderThickness="1"
+                        CornerRadius="10"
+                        Padding="12">
+                        <StackPanel Orientation="Horizontal" Spacing="{StaticResource SpacingS}">
+                            <FontIcon x:Name="SnackbarIcon" Glyph="&#xE946;" FontSize="16" />
+                            <TextBlock x:Name="SnackbarText" Style="{StaticResource BodyTextStyle}" />
+                        </StackPanel>
+                    </Border>
+                </Grid>
+            </NavigationView.Content>
+        </NavigationView>
+
+        <!-- Subtle pulsing animation for the recording dot (started/stopped in code-behind) -->
+        <Grid.Resources>
+            <Storyboard x:Name="RecordingDotPulseStoryboard" RepeatBehavior="Forever" AutoReverse="True">
+                <DoubleAnimation Storyboard.TargetName="RecordingDot" Storyboard.TargetProperty="Opacity" From="0.35" To="1" Duration="0:0:0.55"/>
+            </Storyboard>
+        </Grid.Resources>
     </Grid>
 </Page>
 
