@@ -9,152 +9,319 @@ using System.Threading;
 using System.Threading.Tasks;
 using NAudio.Wave;
 using SharpAvi;
-using SharpAvi.Codecs;
 using SharpAvi.Output;
 using Windows.Storage;
 
 namespace WinUI_App.Services
 {
     /// <summary>
-    /// Handles audio and video capture with rolling buffer
+    /// Immutable snapshot of the rolling buffers taken at a single instant.
+    /// Passed to MaterializeAsync to encode files on a background thread
+    /// while recording continues uninterrupted.
+    /// </summary>
+    public sealed record ClipSnapshot(
+        DateTime     CapturedAtUtc,
+        List<byte[]> SystemAudioChunks,
+        List<byte[]> MicAudioChunks,
+        List<byte[]> VideoJpegs,
+        WaveFormat?  SystemFormat,
+        WaveFormat?  MicFormat);
+
+    /// <summary>
+    /// Handles audio and video capture with a rolling in-memory buffer.
+    /// Temporary file writes during recording have been removed — only in-memory
+    /// buffers are maintained. Clip files are produced on-demand via MaterializeAsync.
     /// </summary>
     public class CaptureService : IDisposable
     {
         private const int BUFFER_DURATION_SECONDS = 30;
-        private const int SAMPLE_RATE = 44100;
-        private const int CHANNELS = 2;
+        private const int SAMPLE_RATE             = 44100;
+        private const int CHANNELS                = 2;
 
-        // Audio capture
+        // Audio capture devices
         private WasapiLoopbackCapture? _systemAudioCapture;
-        private WaveInEvent? _microphoneCapture;
-        private WaveFileWriter? _systemAudioWriter;
-        private WaveFileWriter? _microphoneWriter;
-        private WaveFormat? _systemWaveFormat;
-        private WaveFormat? _microphoneWaveFormat;
+        private WaveInEvent?           _microphoneCapture;
+        private WaveFormat?            _systemWaveFormat;
+        private WaveFormat?            _microphoneWaveFormat;
+        private int                    _preferredMicrophoneDeviceNumber = -1;
 
-        // Rolling buffer
-        private readonly Queue<AudioSegment> _audioBuffer = new();
-        private readonly Queue<AudioSegment> _microphoneBuffer = new();
-        private readonly object _bufferLock = new();
+        // Rolling audio buffers
+        private readonly Queue<AudioSegment> _audioBuffer       = new();
+        private readonly Queue<AudioSegment> _microphoneBuffer  = new();
+        private readonly object              _bufferLock        = new();
         private DateTime _recordingStartTime;
-        private bool _isRecording;
+        private bool     _isRecording;
 
-        // Temporary file paths
-        private string? _tempSystemAudioPath;
-        private string? _tempMicrophonePath;
-        private string? _tempVideoPath;
-        
         // Screen recording
         private Thread? _screenRecordThread;
-        private bool _stopScreenRecording;
-        private int _framesWritten;
+        private bool    _stopScreenRecording;
+        private int     _framesWritten;
         private string? _lastVideoError;
-        private readonly Queue<VideoFrame> _videoBuffer = new();
-        private readonly object _videoBufferLock = new();
-        
-        // Full HD 30 FPS requirement
-        private const int VIDEO_WIDTH = 1920;
-        private const int VIDEO_HEIGHT = 1080;
-        private const int VIDEO_FPS = 30;
+
+        // Rolling video buffer
+        private readonly Queue<VideoFrame> _videoBuffer      = new();
+        private readonly object            _videoBufferLock  = new();
+
+        private const int VIDEO_WIDTH         = 1920;
+        private const int VIDEO_HEIGHT        = 1080;
+        private const int VIDEO_FPS           = 30;
         private const int VIDEO_BUFFER_FRAMES = VIDEO_FPS * BUFFER_DURATION_SECONDS;
 
-        public bool IsRecording => _isRecording;
+        public bool     IsRecording        => _isRecording;
         public DateTime RecordingStartTime => _recordingStartTime;
+        public string   TempFolderPath     => ApplicationData.Current.TemporaryFolder.Path;
+        public int      FramesWritten      => _framesWritten;
+        public string?  LastVideoError     => _lastVideoError;
+        public int      PreferredMicrophoneDeviceNumber => _preferredMicrophoneDeviceNumber;
 
-        public string TempFolderPath => ApplicationData.Current.TemporaryFolder.Path;
-        public int FramesWritten => _framesWritten;
-        public string? LastVideoError => _lastVideoError;
+        public sealed record MicrophoneDeviceInfo(int DeviceNumber, string Name);
 
-        private class AudioSegment
+        private sealed class AudioSegment
         {
-            public byte[] Data { get; set; } = Array.Empty<byte>();
+            public byte[]   Data      { get; set; } = Array.Empty<byte>();
             public DateTime Timestamp { get; set; }
         }
 
-        private class VideoFrame
+        private sealed class VideoFrame
         {
             public byte[] JpegData { get; set; } = Array.Empty<byte>();
         }
 
-        // P/Invoke for screen capture
-        [DllImport("user32.dll")]
-        private static extern IntPtr GetDesktopWindow();
-        
-        [DllImport("user32.dll")]
-        private static extern IntPtr GetDC(IntPtr hWnd);
-        
-        [DllImport("user32.dll")]
-        private static extern int ReleaseDC(IntPtr hWnd, IntPtr hDC);
-        
-        [DllImport("gdi32.dll")]
-        private static extern bool BitBlt(IntPtr hdcDest, int nXDest, int nYDest, int nWidth, int nHeight, IntPtr hdcSrc, int nXSrc, int nYSrc, int dwRop);
-        
-        private const int SRCCOPY = 0x00CC0020;
+        public static IReadOnlyList<MicrophoneDeviceInfo> GetMicrophoneDevices()
+        {
+            var devices = new List<MicrophoneDeviceInfo>();
+            try
+            {
+                for (int i = 0; i < WaveIn.DeviceCount; i++)
+                {
+                    var caps = WaveIn.GetCapabilities(i);
+                    devices.Add(new MicrophoneDeviceInfo(i, caps.ProductName));
+                }
+            }
+            catch
+            {
+                // Keep empty list on failure; UI will show default-only option.
+            }
+            return devices;
+        }
 
         /// <summary>
-        /// Start continuous recording with rolling buffer
+        /// Sets the preferred WaveIn device number (-1 = default system device).
+        /// Returns false if invalid or recording is currently active.
+        /// </summary>
+        public bool SetPreferredMicrophoneDevice(int deviceNumber)
+        {
+            if (_isRecording)
+            {
+                return false;
+            }
+
+            if (deviceNumber < -1)
+            {
+                return false;
+            }
+
+            if (deviceNumber >= 0 && deviceNumber >= WaveIn.DeviceCount)
+            {
+                return false;
+            }
+
+            _preferredMicrophoneDeviceNumber = deviceNumber;
+            return true;
+        }
+
+        // P/Invoke for GDI screen capture
+        [DllImport("user32.dll")] private static extern IntPtr GetDesktopWindow();
+        [DllImport("user32.dll")] private static extern IntPtr GetDC(IntPtr hWnd);
+        [DllImport("user32.dll")] private static extern int    ReleaseDC(IntPtr hWnd, IntPtr hDC);
+        [DllImport("gdi32.dll")]  private static extern bool   BitBlt(IntPtr hdcDest, int nXDest, int nYDest, int nWidth, int nHeight, IntPtr hdcSrc, int nXSrc, int nYSrc, int dwRop);
+        private const int SRCCOPY = 0x00CC0020;
+
+        // ── Snapshot ──────────────────────────────────────────────────────────────
+
+        /// <summary>
+        /// Copies the current rolling buffer contents into a ClipSnapshot.
+        /// Executes in microseconds — recording is never stopped or paused.
+        /// </summary>
+        public ClipSnapshot SnapshotBuffers()
+        {
+            List<byte[]> sys, mic;
+            lock (_bufferLock)
+            {
+                sys = _audioBuffer.Select(x => x.Data).ToList();
+                mic = _microphoneBuffer.Select(x => x.Data).ToList();
+            }
+
+            List<byte[]> vid;
+            lock (_videoBufferLock)
+            {
+                vid = _videoBuffer.Select(x => x.JpegData).ToList();
+            }
+
+            return new ClipSnapshot(DateTime.UtcNow, sys, mic, vid, _systemWaveFormat, _microphoneWaveFormat);
+        }
+
+        // ── Materialize ───────────────────────────────────────────────────────────
+
+        /// <summary>
+        /// Encodes a ClipSnapshot into WAV and AVI files on a background thread.
+        /// Recording continues uninterrupted during this call.
+        /// Video optimization: JPEGs are already VIDEO_WIDTHxVIDEO_HEIGHT (encoded that way
+        /// by CaptureScreenFrameJpeg), so we decode once directly to BGR32 — no second resize.
+        /// </summary>
+        public Task<(string? sysWav, string? micWav, string? avi, double durationSec)> MaterializeAsync(ClipSnapshot snap)
+        {
+            return Task.Run(() =>
+            {
+                var tempFolder = ApplicationData.Current.TemporaryFolder.Path;
+                var now        = snap.CapturedAtUtc;
+
+                string? sysWavPath  = null;
+                string? micWavPath  = null;
+                string? aviPath     = null;
+                double  durationSec = 0;
+
+                var videoDurationSec = snap.VideoJpegs.Count > 0
+                    ? snap.VideoJpegs.Count / (double)VIDEO_FPS
+                    : 0;
+                var micDurationSec = (snap.MicFormat != null && snap.MicAudioChunks.Count > 0)
+                    ? snap.MicAudioChunks.Sum(c => (long)c.Length) / (double)snap.MicFormat.AverageBytesPerSecond
+                    : 0;
+
+                // System audio: always materialize when format exists.
+                // If loopback chunks are empty (e.g., user captured silence), create a short silent WAV
+                // so Flag/Report still works instead of failing with "No audio data captured."
+                if (snap.SystemFormat != null)
+                {
+                    sysWavPath = Path.Combine(tempFolder, MediaFileNamer.DesktopAudio(now));
+                    using var writer = new WaveFileWriter(sysWavPath, snap.SystemFormat);
+                    if (snap.SystemAudioChunks.Count > 0)
+                    {
+                        foreach (var chunk in snap.SystemAudioChunks)
+                            writer.Write(chunk, 0, chunk.Length);
+                        var totalBytes = snap.SystemAudioChunks.Sum(c => (long)c.Length);
+                        durationSec = totalBytes / (double)snap.SystemFormat.AverageBytesPerSecond;
+                    }
+                    else
+                    {
+                        var fallbackDuration = Math.Clamp(
+                            Math.Max(1.0, Math.Max(micDurationSec, videoDurationSec)),
+                            1.0,
+                            BUFFER_DURATION_SECONDS);
+                        var bytes = (int)(snap.SystemFormat.AverageBytesPerSecond * fallbackDuration);
+                        var silence = new byte[bytes];
+                        writer.Write(silence, 0, silence.Length);
+                        durationSec = fallbackDuration;
+                    }
+                    writer.Flush();
+                }
+
+                // Microphone audio
+                if (snap.MicFormat != null && snap.MicAudioChunks.Count > 0)
+                {
+                    micWavPath = Path.Combine(tempFolder, MediaFileNamer.MicAudio(now));
+                    using var writer = new WaveFileWriter(micWavPath, snap.MicFormat);
+                    foreach (var chunk in snap.MicAudioChunks)
+                        writer.Write(chunk, 0, chunk.Length);
+                    writer.Flush();
+                }
+
+                // Fallback: if system loopback format is unavailable but mic exists, produce a primary WAV from mic.
+                if (sysWavPath == null && snap.MicFormat != null && snap.MicAudioChunks.Count > 0)
+                {
+                    sysWavPath = Path.Combine(tempFolder, MediaFileNamer.DesktopAudio(now));
+                    using var writer = new WaveFileWriter(sysWavPath, snap.MicFormat);
+                    foreach (var chunk in snap.MicAudioChunks)
+                        writer.Write(chunk, 0, chunk.Length);
+                    writer.Flush();
+                    durationSec = micDurationSec;
+                }
+
+                // Video — zero-decode path: frames are already JPEG at target resolution.
+                // Write raw JPEG bytes directly as MJPEG AVI frames.
+                // No Bitmap decode, no BGR32 conversion, no re-encode.
+                if (snap.VideoJpegs.Count > 0)
+                {
+                    aviPath = Path.Combine(tempFolder, MediaFileNamer.Video(now));
+                    try
+                    {
+                        using var aviWriter = new AviWriter(aviPath)
+                        {
+                            FramesPerSecond = VIDEO_FPS,
+                            EmitIndex1      = true
+                        };
+
+                        var stream   = aviWriter.AddVideoStream(VIDEO_WIDTH, VIDEO_HEIGHT, BitsPerPixel.Bpp24);
+                        stream.Codec = new FourCC("MJPG");
+
+                        foreach (var jpeg in snap.VideoJpegs)
+                            stream.WriteFrame(true, jpeg, 0, jpeg.Length);
+                    }
+                    catch (Exception ex)
+                    {
+                        _lastVideoError = $"Video materialize error: {ex.Message}";
+                        System.Diagnostics.Debug.WriteLine(_lastVideoError);
+                        TryDeleteFile(aviPath);
+                        aviPath = null;
+                    }
+                }
+
+                return (sysWavPath, micWavPath, aviPath, durationSec);
+            });
+        }
+
+        // ── Recording lifecycle ───────────────────────────────────────────────────
+
+        /// <summary>
+        /// Starts continuous recording. Only in-memory buffers are maintained;
+        /// no temp files are written to disk during recording.
         /// </summary>
         public async Task<(bool success, string error)> StartRecordingAsync()
         {
             if (_isRecording)
-            {
                 return (false, "Already recording");
-            }
 
             try
             {
-                // Create temporary files with unique timestamp+ID names
-                var tempFolder = ApplicationData.Current.TemporaryFolder;
-                var now = DateTime.UtcNow;
-
-                _tempSystemAudioPath = Path.Combine(tempFolder.Path, MediaFileNamer.DesktopAudio(now));
-                _tempMicrophonePath = Path.Combine(tempFolder.Path, MediaFileNamer.MicAudio(now));
-                _tempVideoPath = null;
-
-                // Start system audio capture (loopback)
+                // System audio (loopback)
                 _systemAudioCapture = new WasapiLoopbackCapture();
-                var systemFormat = _systemAudioCapture.WaveFormat;
-                _systemWaveFormat = systemFormat;
-                _systemAudioWriter = new WaveFileWriter(_tempSystemAudioPath, systemFormat);
-
-                _systemAudioCapture.DataAvailable += SystemAudio_DataAvailable;
+                _systemWaveFormat   = _systemAudioCapture.WaveFormat;
+                _systemAudioCapture.DataAvailable    += SystemAudio_DataAvailable;
                 _systemAudioCapture.RecordingStopped += (s, e) =>
                 {
                     if (e.Exception != null)
-                    {
-                        System.Diagnostics.Debug.WriteLine($"System audio capture error: {e.Exception.Message}");
-                    }
+                        System.Diagnostics.Debug.WriteLine($"System audio error: {e.Exception.Message}");
                 };
 
-                // Start microphone capture
+                // Microphone (optional — continues without it on failure)
                 try
                 {
+                    if (WaveIn.DeviceCount <= 0)
+                    {
+                        throw new InvalidOperationException("No microphone input devices found.");
+                    }
+
                     _microphoneCapture = new WaveInEvent
                     {
-                        WaveFormat = new WaveFormat(SAMPLE_RATE, CHANNELS),
+                        DeviceNumber      = _preferredMicrophoneDeviceNumber >= 0 ? _preferredMicrophoneDeviceNumber : 0,
+                        WaveFormat         = new WaveFormat(SAMPLE_RATE, CHANNELS),
                         BufferMilliseconds = 100
                     };
-
-                    _microphoneWaveFormat = _microphoneCapture.WaveFormat;
-                    _microphoneWriter = new WaveFileWriter(_tempMicrophonePath, _microphoneCapture.WaveFormat);
-                    _microphoneCapture.DataAvailable += Microphone_DataAvailable;
+                    _microphoneWaveFormat               = _microphoneCapture.WaveFormat;
+                    _microphoneCapture.DataAvailable    += Microphone_DataAvailable;
                     _microphoneCapture.RecordingStopped += (s, e) =>
                     {
                         if (e.Exception != null)
-                        {
-                            System.Diagnostics.Debug.WriteLine($"Microphone capture error: {e.Exception.Message}");
-                        }
+                            System.Diagnostics.Debug.WriteLine($"Mic error: {e.Exception.Message}");
                     };
                 }
                 catch (Exception micEx)
                 {
-                    System.Diagnostics.Debug.WriteLine($"Microphone initialization failed: {micEx.Message}");
-                    // Continue without microphone
+                    System.Diagnostics.Debug.WriteLine($"Microphone init failed: {micEx.Message}");
                 }
 
-                // Mark recording as started first (screen thread depends on this state)
                 _recordingStartTime = DateTime.UtcNow;
-                _isRecording = true;
+                _isRecording        = true;
 
                 lock (_bufferLock)
                 {
@@ -166,9 +333,7 @@ namespace WinUI_App.Services
                     _videoBuffer.Clear();
                 }
 
-                // Start screen recording (spawns background thread)
                 StartScreenRecording();
-
                 _systemAudioCapture.StartRecording();
                 _microphoneCapture?.StartRecording();
 
@@ -176,25 +341,50 @@ namespace WinUI_App.Services
             }
             catch (Exception ex)
             {
-                Cleanup();
+                CleanupCapture();
                 return (false, $"Failed to start recording: {ex.Message}");
             }
         }
+
+        public void StopRecording()
+        {
+            if (!_isRecording) return;
+
+            _isRecording         = false;
+            _stopScreenRecording = true;
+
+            _systemAudioCapture?.StopRecording();
+            _microphoneCapture?.StopRecording();
+
+            if (_screenRecordThread?.IsAlive == true)
+                _screenRecordThread.Join(15_000);
+
+            Thread.Sleep(100);
+            CleanupCapture();
+        }
+
+        private void CleanupCapture()
+        {
+            _systemAudioCapture?.Dispose();
+            _microphoneCapture?.Dispose();
+            _systemAudioCapture = null;
+            _microphoneCapture  = null;
+        }
+
+        // ── Screen recording ──────────────────────────────────────────────────────
 
         private void StartScreenRecording()
         {
             try
             {
-                _lastVideoError = null;
-                _framesWritten = 0;
-
+                _lastVideoError      = null;
+                _framesWritten       = 0;
                 _stopScreenRecording = false;
 
-                // Start capture thread
                 _screenRecordThread = new Thread(ScreenCaptureLoop)
                 {
                     IsBackground = true,
-                    Priority = ThreadPriority.BelowNormal
+                    Priority     = ThreadPriority.BelowNormal
                 };
                 _screenRecordThread.Start();
             }
@@ -207,34 +397,34 @@ namespace WinUI_App.Services
 
         private void ScreenCaptureLoop()
         {
-            var frameIntervalSeconds = 1.0 / VIDEO_FPS;
-            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
-            var nextFrameTimeSeconds = 0.0;
+            var frameInterval     = 1.0 / VIDEO_FPS;
+            var sw                = System.Diagnostics.Stopwatch.StartNew();
+            var nextFrameTime     = 0.0;
             byte[]? lastFrameJpeg = null;
 
             try
             {
-                // Run until StopRecording() signals stop
                 while (!_stopScreenRecording)
                 {
-                    var nowSeconds = stopwatch.Elapsed.TotalSeconds;
-                    if (nowSeconds >= nextFrameTimeSeconds)
+                    var now = sw.Elapsed.TotalSeconds;
+                    if (now >= nextFrameTime)
                     {
-                        var frameJpeg = CaptureScreenFrameJpeg();
-                        if (frameJpeg != null)
+                        var jpeg = CaptureScreenFrameJpeg();
+                        if (jpeg != null)
                         {
-                            AddVideoFrameToBuffer(frameJpeg);
-                            lastFrameJpeg = frameJpeg;
+                            AddVideoFrameToBuffer(jpeg);
+                            lastFrameJpeg = jpeg;
                         }
 
-                        nextFrameTimeSeconds += frameIntervalSeconds;
-                        nowSeconds = stopwatch.Elapsed.TotalSeconds;
+                        nextFrameTime += frameInterval;
+                        now = sw.Elapsed.TotalSeconds;
 
-                        while (nowSeconds >= nextFrameTimeSeconds && lastFrameJpeg != null)
+                        // Catch up dropped frames by repeating last frame
+                        while (now >= nextFrameTime && lastFrameJpeg != null)
                         {
                             AddVideoFrameToBuffer(lastFrameJpeg);
-                            nextFrameTimeSeconds += frameIntervalSeconds;
-                            nowSeconds = stopwatch.Elapsed.TotalSeconds;
+                            nextFrameTime += frameInterval;
+                            now = sw.Elapsed.TotalSeconds;
                         }
                     }
                     else
@@ -245,7 +435,7 @@ namespace WinUI_App.Services
             }
             catch (Exception ex)
             {
-                System.Diagnostics.Debug.WriteLine($"Screen capture error: {ex.Message}");
+                System.Diagnostics.Debug.WriteLine($"Screen capture loop error: {ex.Message}");
             }
         }
 
@@ -253,28 +443,28 @@ namespace WinUI_App.Services
         {
             try
             {
-                // Get screen dimensions
-                var screenBounds = System.Windows.Forms.Screen.PrimaryScreen.Bounds;
+                var bounds = System.Windows.Forms.Screen.PrimaryScreen.Bounds;
 
-                // Capture full screen into a bitmap
-                using var screenBitmap = new Bitmap(screenBounds.Width, screenBounds.Height, PixelFormat.Format32bppRgb);
-                using (var screenGraphics = Graphics.FromImage(screenBitmap))
+                // Capture raw screen
+                using var screenBitmap = new Bitmap(bounds.Width, bounds.Height, PixelFormat.Format32bppRgb);
+                using (var g = Graphics.FromImage(screenBitmap))
                 {
-                    IntPtr desktopDC = GetDC(GetDesktopWindow());
-                    IntPtr memoryDC = screenGraphics.GetHdc();
-
-                    BitBlt(memoryDC, 0, 0, screenBounds.Width, screenBounds.Height, desktopDC, 0, 0, SRCCOPY);
-
-                    screenGraphics.ReleaseHdc(memoryDC);
+                    var desktopDC = GetDC(GetDesktopWindow());
+                    var memDC     = g.GetHdc();
+                    BitBlt(memDC, 0, 0, bounds.Width, bounds.Height, desktopDC, 0, 0, SRCCOPY);
+                    g.ReleaseHdc(memDC);
                     ReleaseDC(GetDesktopWindow(), desktopDC);
                 }
 
-                // Resize to target resolution (1920x1080)
+                // Skip resize if screen is already the target resolution
+                if (bounds.Width == VIDEO_WIDTH && bounds.Height == VIDEO_HEIGHT)
+                    return EncodeJpeg(screenBitmap, 70L);
+
                 using var frameBitmap = new Bitmap(VIDEO_WIDTH, VIDEO_HEIGHT, PixelFormat.Format32bppRgb);
-                using (var frameGraphics = Graphics.FromImage(frameBitmap))
+                using (var g = Graphics.FromImage(frameBitmap))
                 {
-                    frameGraphics.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBilinear;
-                    frameGraphics.DrawImage(screenBitmap, 0, 0, VIDEO_WIDTH, VIDEO_HEIGHT);
+                    g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBilinear;
+                    g.DrawImage(screenBitmap, 0, 0, VIDEO_WIDTH, VIDEO_HEIGHT);
                 }
 
                 return EncodeJpeg(frameBitmap, 70L);
@@ -283,8 +473,8 @@ namespace WinUI_App.Services
             {
                 _lastVideoError = $"Frame capture error: {ex}";
                 System.Diagnostics.Debug.WriteLine(_lastVideoError);
+                return null;
             }
-            return null;
         }
 
         private void AddVideoFrameToBuffer(byte[] jpegData)
@@ -293,9 +483,7 @@ namespace WinUI_App.Services
             {
                 _videoBuffer.Enqueue(new VideoFrame { JpegData = jpegData });
                 while (_videoBuffer.Count > VIDEO_BUFFER_FRAMES)
-                {
                     _videoBuffer.Dequeue();
-                }
                 Interlocked.Increment(ref _framesWritten);
             }
         }
@@ -303,361 +491,66 @@ namespace WinUI_App.Services
         private byte[] EncodeJpeg(Bitmap bitmap, long quality)
         {
             using var stream = new MemoryStream();
-            var codec = ImageCodecInfo.GetImageEncoders().First(c => c.MimeType == "image/jpeg");
-            using var encoderParams = new EncoderParameters(1);
-            encoderParams.Param[0] = new EncoderParameter(Encoder.Quality, quality);
-            bitmap.Save(stream, codec, encoderParams);
+            var codec        = ImageCodecInfo.GetImageEncoders().First(c => c.MimeType == "image/jpeg");
+            using var ep     = new EncoderParameters(1);
+            ep.Param[0]      = new EncoderParameter(Encoder.Quality, quality);
+            bitmap.Save(stream, codec, ep);
             return stream.ToArray();
         }
 
-        private byte[] BitmapToBgr32Tight(Bitmap bitmap)
-        {
-            var rect = new Rectangle(0, 0, bitmap.Width, bitmap.Height);
-            var bitmapData = bitmap.LockBits(rect, ImageLockMode.ReadOnly, PixelFormat.Format32bppRgb);
-
-            // SharpAvi expects tightly-packed buffer (no row padding). Many bitmaps have stride padding.
-            var expectedStride = bitmap.Width * 4;
-            var srcStride = bitmapData.Stride;
-            var bytes = new byte[expectedStride * bitmap.Height];
-
-            if (srcStride == expectedStride)
-            {
-                Marshal.Copy(bitmapData.Scan0, bytes, 0, bytes.Length);
-            }
-            else
-            {
-                // Copy row-by-row to remove padding.
-                var srcBase = bitmapData.Scan0;
-                for (int y = 0; y < bitmap.Height; y++)
-                {
-                    var srcRow = IntPtr.Add(srcBase, y * srcStride);
-                    Marshal.Copy(srcRow, bytes, y * expectedStride, expectedStride);
-                }
-            }
-
-            bitmap.UnlockBits(bitmapData);
-            return bytes;
-        }
+        // ── Audio data handlers ───────────────────────────────────────────────────
 
         private void SystemAudio_DataAvailable(object? sender, WaveInEventArgs e)
         {
-            if (_systemAudioWriter != null && e.BytesRecorded > 0)
+            if (e.BytesRecorded <= 0) return;
+
+            lock (_bufferLock)
             {
-                _systemAudioWriter.Write(e.Buffer, 0, e.BytesRecorded);
-                _systemAudioWriter.Flush();
-
-                // Add to rolling buffer (simplified for MVP)
-                lock (_bufferLock)
+                _audioBuffer.Enqueue(new AudioSegment
                 {
-                    _audioBuffer.Enqueue(new AudioSegment
-                    {
-                        Data = e.Buffer.Take(e.BytesRecorded).ToArray(),
-                        Timestamp = DateTime.UtcNow
-                    });
-
-                    // Remove segments older than buffer duration
-                    while (_audioBuffer.Count > 0)
-                    {
-                        var oldest = _audioBuffer.Peek();
-                        if ((DateTime.UtcNow - oldest.Timestamp).TotalSeconds > BUFFER_DURATION_SECONDS)
-                        {
-                            _audioBuffer.Dequeue();
-                        }
-                        else
-                        {
-                            break;
-                        }
-                    }
-                }
+                    Data      = e.Buffer.Take(e.BytesRecorded).ToArray(),
+                    Timestamp = DateTime.UtcNow
+                });
+                EvictOldSegments(_audioBuffer);
             }
         }
 
         private void Microphone_DataAvailable(object? sender, WaveInEventArgs e)
         {
-            if (_microphoneWriter != null && e.BytesRecorded > 0)
-            {
-                _microphoneWriter.Write(e.Buffer, 0, e.BytesRecorded);
-                _microphoneWriter.Flush();
+            if (e.BytesRecorded <= 0) return;
 
-                lock (_bufferLock)
-                {
-                    _microphoneBuffer.Enqueue(new AudioSegment
-                    {
-                        Data = e.Buffer.Take(e.BytesRecorded).ToArray(),
-                        Timestamp = DateTime.UtcNow
-                    });
-
-                    while (_microphoneBuffer.Count > 0)
-                    {
-                        var oldest = _microphoneBuffer.Peek();
-                        if ((DateTime.UtcNow - oldest.Timestamp).TotalSeconds > BUFFER_DURATION_SECONDS)
-                        {
-                            _microphoneBuffer.Dequeue();
-                        }
-                        else
-                        {
-                            break;
-                        }
-                    }
-                }
-            }
-        }
-
-        /// <summary>
-        /// Stop recording
-        /// </summary>
-        public void StopRecording()
-        {
-            if (!_isRecording)
-            {
-                return;
-            }
-
-            _isRecording = false;
-            _stopScreenRecording = true;
-
-            _systemAudioCapture?.StopRecording();
-            _microphoneCapture?.StopRecording();
-
-            // Wait for screen recording thread to finish (do not close writer while it may still write)
-            if (_screenRecordThread != null && _screenRecordThread.IsAlive)
-            {
-                _screenRecordThread.Join(15000); // Wait up to 15 seconds
-            }
-
-            Thread.Sleep(100); // Give time for final buffers to write
-
-            _systemAudioWriter?.Dispose();
-            _microphoneWriter?.Dispose();
-
-            _systemAudioCapture?.Dispose();
-            _microphoneCapture?.Dispose();
-
-            _systemAudioWriter = null;
-            _microphoneWriter = null;
-            _systemAudioCapture = null;
-            _microphoneCapture = null;
-        }
-
-        /// <summary>
-        /// Get captured files (audio and video)
-        /// </summary>
-        public (string? systemAudioPath, string? microphonePath, string? videoPath) GetCapturedFiles()
-        {
-            return (_tempSystemAudioPath, _tempMicrophonePath, _tempVideoPath);
-        }
-
-        /// <summary>
-        /// Save current recording and immediately restart new recording
-        /// </summary>
-        public (string? audioPath, string? micPath, string? videoPath) SaveAndRestartRecording()
-        {
-            if (!_isRecording)
-            {
-                return (null, null, null);
-            }
-
-            var tempFolder = ApplicationData.Current.TemporaryFolder;
-            var now = DateTime.UtcNow;
-            var clipAudioPath = Path.Combine(tempFolder.Path, MediaFileNamer.DesktopAudio(now));
-            var clipMicPath = Path.Combine(tempFolder.Path, MediaFileNamer.MicAudio(now));
-
-            string? savedClipAudioPath = null;
-            string? savedClipMicPath = null;
-
-            if (_systemWaveFormat != null)
-            {
-                savedClipAudioPath = SaveAudioClipFromBuffer(_audioBuffer, _systemWaveFormat, clipAudioPath);
-                if (savedClipAudioPath == null)
-                {
-                    savedClipAudioPath = SaveSilentAudioClip(_systemWaveFormat, clipAudioPath);
-                }
-            }
-
-            if (_microphoneWaveFormat != null)
-            {
-                savedClipMicPath = SaveAudioClipFromBuffer(_microphoneBuffer, _microphoneWaveFormat, clipMicPath);
-            }
-
-            var savedVideoClipPath = SaveVideoClipFromBuffer();
-
-            var fullSystemPath = _tempSystemAudioPath;
-            var fullMicPath = _tempMicrophonePath;
-
-            // Stop current recording
-            StopRecording();
-
-            // Clear temp paths so new recording gets new files
-            _tempSystemAudioPath = null;
-            _tempMicrophonePath = null;
-            _tempVideoPath = null;
-
-            TryDeleteFile(fullSystemPath);
-            TryDeleteFile(fullMicPath);
-
-            // Restart recording immediately
-            _ = StartRecordingAsync();
-
-            return (savedClipAudioPath, savedClipMicPath, savedVideoClipPath);
-        }
-
-        private void TryDeleteFile(string? path)
-        {
-            try
-            {
-                if (!string.IsNullOrEmpty(path) && File.Exists(path))
-                {
-                    File.Delete(path);
-                }
-            }
-            catch
-            {
-            }
-        }
-
-        private string? SaveAudioClipFromBuffer(Queue<AudioSegment> buffer, WaveFormat format, string outputPath)
-        {
-            List<AudioSegment> segments;
             lock (_bufferLock)
             {
-                if (buffer.Count == 0)
+                _microphoneBuffer.Enqueue(new AudioSegment
                 {
-                    return null;
-                }
-                segments = buffer.ToList();
+                    Data      = e.Buffer.Take(e.BytesRecorded).ToArray(),
+                    Timestamp = DateTime.UtcNow
+                });
+                EvictOldSegments(_microphoneBuffer);
             }
-
-            using var writer = new WaveFileWriter(outputPath, format);
-            foreach (var segment in segments)
-            {
-                writer.Write(segment.Data, 0, segment.Data.Length);
-            }
-            writer.Flush();
-            return outputPath;
         }
 
-        private string? SaveSilentAudioClip(WaveFormat format, string outputPath)
+        private static void EvictOldSegments(Queue<AudioSegment> queue)
         {
-            try
-            {
-                var durationSeconds = BUFFER_DURATION_SECONDS;
-                var totalBytes = format.AverageBytesPerSecond * durationSeconds;
-                var silence = new byte[totalBytes];
-
-                using var writer = new WaveFileWriter(outputPath, format);
-                writer.Write(silence, 0, silence.Length);
-                writer.Flush();
-                return outputPath;
-            }
-            catch
-            {
-                return null;
-            }
+            var cutoff = DateTime.UtcNow.AddSeconds(-BUFFER_DURATION_SECONDS);
+            while (queue.Count > 0 && queue.Peek().Timestamp < cutoff)
+                queue.Dequeue();
         }
 
-        private string? SaveVideoClipFromBuffer()
-        {
-            List<VideoFrame> frames;
-            lock (_videoBufferLock)
-            {
-                if (_videoBuffer.Count == 0)
-                {
-                    return null;
-                }
-                frames = _videoBuffer.ToList();
-            }
-
-            var tempFolder = ApplicationData.Current.TemporaryFolder;
-            var videoPath = Path.Combine(tempFolder.Path, MediaFileNamer.Video(DateTime.UtcNow));
-
-            try
-            {
-                using var aviWriter = new AviWriter(videoPath)
-                {
-                    FramesPerSecond = VIDEO_FPS,
-                    EmitIndex1 = true
-                };
-
-                var videoStream = aviWriter.AddMJpegWpfVideoStream(VIDEO_WIDTH, VIDEO_HEIGHT, quality: 70);
-
-                foreach (var frame in frames)
-                {
-                    using var jpegStream = new MemoryStream(frame.JpegData);
-                    using var sourceBitmap = new Bitmap(jpegStream);
-                    using var frameBitmap = new Bitmap(VIDEO_WIDTH, VIDEO_HEIGHT, PixelFormat.Format32bppRgb);
-                    using (var g = Graphics.FromImage(frameBitmap))
-                    {
-                        g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBilinear;
-                        g.DrawImage(sourceBitmap, 0, 0, VIDEO_WIDTH, VIDEO_HEIGHT);
-                    }
-
-                    var frameData = BitmapToBgr32Tight(frameBitmap);
-                    videoStream.WriteFrame(true, frameData, 0, frameData.Length);
-                }
-            }
-            catch (Exception ex)
-            {
-                _lastVideoError = $"Video clip write error: {ex}";
-                System.Diagnostics.Debug.WriteLine(_lastVideoError);
-                return null;
-            }
-
-            _tempVideoPath = videoPath;
-            return videoPath;
-        }
+        // ── Utility ───────────────────────────────────────────────────────────────
 
         public long GetFileSizeBytes(string? path)
         {
-            try
-            {
-                if (string.IsNullOrEmpty(path) || !File.Exists(path))
-                {
-                    return 0;
-                }
-                return new FileInfo(path).Length;
-            }
-            catch
-            {
-                return 0;
-            }
+            try { return string.IsNullOrEmpty(path) || !File.Exists(path) ? 0 : new FileInfo(path).Length; }
+            catch { return 0; }
         }
 
         /// <summary>
-        /// Delete temporary files
+        /// Clears rolling in-memory buffers. Call after stopping recording or logging out.
+        /// No files are deleted because no temp files are written during recording.
         /// </summary>
         public void CleanupTempFiles()
         {
-            try
-            {
-                if (_tempSystemAudioPath != null && File.Exists(_tempSystemAudioPath))
-                {
-                    File.Delete(_tempSystemAudioPath);
-                    _tempSystemAudioPath = null;
-                }
-            }
-            catch { }
-
-            try
-            {
-                if (_tempMicrophonePath != null && File.Exists(_tempMicrophonePath))
-                {
-                    File.Delete(_tempMicrophonePath);
-                    _tempMicrophonePath = null;
-                }
-            }
-            catch { }
-
-            try
-            {
-                if (_tempVideoPath != null && File.Exists(_tempVideoPath))
-                {
-                    File.Delete(_tempVideoPath);
-                    _tempVideoPath = null;
-                }
-            }
-            catch { }
-
-
             lock (_bufferLock)
             {
                 _audioBuffer.Clear();
@@ -669,17 +562,17 @@ namespace WinUI_App.Services
             }
         }
 
-        private void Cleanup()
+        private static void TryDeleteFile(string? path)
         {
-            StopRecording();
-            CleanupTempFiles();
+            try { if (!string.IsNullOrEmpty(path) && File.Exists(path)) File.Delete(path); }
+            catch { }
         }
 
         public void Dispose()
         {
-            Cleanup();
+            StopRecording();
+            CleanupTempFiles();
             GC.SuppressFinalize(this);
         }
     }
 }
-

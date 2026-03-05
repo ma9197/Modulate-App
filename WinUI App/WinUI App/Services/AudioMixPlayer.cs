@@ -62,6 +62,7 @@ namespace WinUI_App.Services
             DisposePlayback();
 
             _desktopReader = new AudioFileReader(desktopPath);
+            _desktopReader.Volume = 0.85f; // Leave headroom so mic remains audible in the mixed preview.
             DurationSeconds = _desktopReader.TotalTime.TotalSeconds;
 
             var targetFormat = WaveFormat.CreateIeeeFloatWaveFormat(
@@ -79,6 +80,8 @@ namespace WinUI_App.Services
             if (!string.IsNullOrEmpty(micPath) && File.Exists(micPath))
             {
                 _micReader = new AudioFileReader(micPath);
+                _micReader.Volume = 1.35f; // Slight boost to improve audibility against desktop mix.
+                DurationSeconds = Math.Max(DurationSeconds, _micReader.TotalTime.TotalSeconds);
                 var micResampled = new WdlResamplingSampleProvider(
                     ToStereoIfMono(_micReader), targetFormat.SampleRate);
                 _micTrimmed = new OffsetSampleProvider(micResampled);

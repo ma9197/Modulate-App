@@ -12,7 +12,11 @@
     <Grid x:Name="ShadowReceiver" Background="{StaticResource AppBackgroundBrush}">
         <NavigationView
             x:Name="RootNav"
-            PaneDisplayMode="Left"
+            PaneDisplayMode="LeftCompact"
+            IsPaneOpen="False"
+            OpenPaneLength="260"
+            CompactPaneLength="56"
+            IsPaneToggleButtonVisible="True"
             IsBackButtonVisible="Collapsed"
             IsSettingsVisible="False"
             AlwaysShowHeader="True"
@@ -39,40 +43,46 @@
 
             <NavigationView.Header>
                 <Grid Margin="{StaticResource PadXL}">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*"/>
-                        <ColumnDefinition Width="Auto"/>
-                    </Grid.ColumnDefinitions>
+                    <Grid MaxWidth="860" HorizontalAlignment="Center">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
 
-                    <StackPanel Grid.Column="0" Spacing="4">
-                        <TextBlock Text="Toxicity Reporter" Style="{StaticResource AppTitleTextStyle}"/>
-                        <TextBlock
-                            x:Name="UserEmailText"
-                            Text="Logged in as: user@example.com"
-                            Style="{StaticResource BodyTextStyle}"
-                            Foreground="{StaticResource SecondaryTextBrush}"/>
-                    </StackPanel>
+                        <StackPanel Grid.Column="0" Spacing="4">
+                            <TextBlock Text="Toxicity Reporter" Style="{StaticResource AppTitleTextStyle}"/>
+                            <TextBlock
+                                x:Name="UserEmailText"
+                                Text="Logged in as: user@example.com"
+                                Style="{StaticResource BodyTextStyle}"
+                                Foreground="{StaticResource SecondaryTextBrush}"/>
+                        </StackPanel>
 
-                    <Button
-                        Grid.Column="1"
-                        Content="Log Out"
-                        Click="LogoutButton_Click"
-                        Style="{StaticResource SecondaryButtonStyle}"
-                        HorizontalAlignment="Right"
-                        VerticalAlignment="Center"
-                        Width="120"/>
+                        <Button
+                            Grid.Column="1"
+                            Content="Log Out"
+                            Click="LogoutButton_Click"
+                            Style="{StaticResource SecondaryButtonStyle}"
+                            HorizontalAlignment="Right"
+                            VerticalAlignment="Center"
+                            Width="120"/>
+                    </Grid>
                 </Grid>
             </NavigationView.Header>
 
             <NavigationView.Content>
                 <Grid>
                     <!-- Record view -->
-                    <ScrollViewer x:Name="RecordScroll" VerticalScrollBarVisibility="Auto">
+                    <ScrollViewer x:Name="RecordScroll"
+                                  VerticalScrollBarVisibility="Disabled"
+                                  VerticalScrollMode="Disabled"
+                                  HorizontalScrollBarVisibility="Disabled"
+                                  HorizontalScrollMode="Disabled">
+                        <Grid Margin="{StaticResource PadXL}">
                         <StackPanel
-                            Margin="{StaticResource PadXL}"
-                            Spacing="{StaticResource SpacingXL}"
+                            Spacing="{StaticResource SpacingL}"
                             MaxWidth="860"
-                            HorizontalAlignment="Left">
+                            HorizontalAlignment="Center">
 
                             <TextBlock Text="Record" Style="{StaticResource SectionTitleTextStyle}"/>
 
@@ -173,6 +183,7 @@
                                 </StackPanel>
                             </Border>
                         </StackPanel>
+                        </Grid>
                     </ScrollViewer>
 
                     <!-- Pending view -->
@@ -181,7 +192,7 @@
                             Margin="{StaticResource PadXL}"
                             Spacing="{StaticResource SpacingXL}"
                             MaxWidth="860"
-                            HorizontalAlignment="Left">
+                            HorizontalAlignment="Center">
 
                             <TextBlock Text="Pending reports" Style="{StaticResource SectionTitleTextStyle}"/>
 
@@ -255,7 +266,7 @@
                             Margin="{StaticResource PadXL}"
                             Spacing="{StaticResource SpacingXL}"
                             MaxWidth="860"
-                            HorizontalAlignment="Left">
+                            HorizontalAlignment="Center">
 
                             <TextBlock Text="Settings" Style="{StaticResource SectionTitleTextStyle}"/>
 
@@ -275,6 +286,90 @@
                                         x:Name="CloseExitsToggle"
                                         Header="Close button exits app"
                                         Toggled="CloseExitsToggle_Toggled" />
+
+                                    <TextBlock Text="Audio input" Style="{StaticResource CardTitleTextStyle}" Margin="0,8,0,0"/>
+
+                                    <Grid ColumnSpacing="{StaticResource SpacingM}">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="220"/>
+                                            <ColumnDefinition Width="*"/>
+                                        </Grid.ColumnDefinitions>
+
+                                        <TextBlock
+                                            Grid.Column="0"
+                                            Text="Microphone device"
+                                            Style="{StaticResource BodyTextStyle}"
+                                            VerticalAlignment="Center"/>
+
+                                        <ComboBox
+                                            x:Name="MicrophoneDeviceCombo"
+                                            Grid.Column="1"
+                                            SelectionChanged="MicrophoneDeviceCombo_SelectionChanged"
+                                            HorizontalAlignment="Left"
+                                            MinWidth="260"/>
+                                    </Grid>
+
+                                    <TextBlock
+                                        x:Name="MicrophoneDeviceHintText"
+                                        Text="Stop recording before changing microphone."
+                                        Style="{StaticResource MetadataTextStyle}"
+                                        Foreground="{StaticResource SecondaryTextBrush}"/>
+
+                                    <TextBlock Text="Notifications" Style="{StaticResource CardTitleTextStyle}" Margin="0,8,0,0"/>
+
+                                    <Border
+                                        Background="{StaticResource SurfaceElevatedBrush}"
+                                        BorderBrush="{StaticResource BorderSubtleBrush}"
+                                        BorderThickness="1"
+                                        CornerRadius="8"
+                                        Padding="12">
+                                        <StackPanel Spacing="4">
+                                            <TextBlock
+                                                x:Name="NotificationModeText"
+                                                Text="Notification mode: checking..."
+                                                Style="{StaticResource BodyTextStyle}"
+                                                FontWeight="SemiBold"/>
+                                            <TextBlock
+                                                x:Name="NotificationModeHintText"
+                                                Text="This indicates whether Windows system toasts are available."
+                                                Style="{StaticResource MetadataTextStyle}"
+                                                Foreground="{StaticResource SecondaryTextBrush}"/>
+                                        </StackPanel>
+                                    </Border>
+
+                                    <TextBlock Text="Status overlay" Style="{StaticResource CardTitleTextStyle}" Margin="0,8,0,0"/>
+
+                                    <ToggleSwitch
+                                        x:Name="OverlayEnabledToggle"
+                                        Header="Show status overlay when minimized to tray"
+                                        Toggled="OverlayEnabledToggle_Toggled"/>
+
+                                    <Grid
+                                        x:Name="OverlayPositionRow"
+                                        ColumnSpacing="{StaticResource SpacingM}">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="220"/>
+                                            <ColumnDefinition Width="*"/>
+                                        </Grid.ColumnDefinitions>
+
+                                        <TextBlock
+                                            Grid.Column="0"
+                                            Text="Overlay position"
+                                            Style="{StaticResource BodyTextStyle}"
+                                            VerticalAlignment="Center"/>
+
+                                        <ComboBox
+                                            x:Name="OverlayPositionCombo"
+                                            Grid.Column="1"
+                                            SelectionChanged="OverlayPositionCombo_SelectionChanged"
+                                            HorizontalAlignment="Left"
+                                            MinWidth="200">
+                                            <ComboBoxItem Content="Top right"    Tag="TopRight"/>
+                                            <ComboBoxItem Content="Top left"     Tag="TopLeft"/>
+                                            <ComboBoxItem Content="Bottom right" Tag="BottomRight"/>
+                                            <ComboBoxItem Content="Bottom left"  Tag="BottomLeft"/>
+                                        </ComboBox>
+                                    </Grid>
 
                                     <TextBlock Text="Hotkeys" Style="{StaticResource CardTitleTextStyle}" Margin="0,8,0,0"/>
 

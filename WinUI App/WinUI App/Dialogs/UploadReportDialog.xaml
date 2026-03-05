@@ -9,34 +9,44 @@
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     mc:Ignorable="d"
     Title="Submit Report"
-    PrimaryButtonText="Submit Report"
-    SecondaryButtonText="Save for later"
+    PrimaryButtonText="Submit"
+    SecondaryButtonText="Save"
     CloseButtonText="Cancel"
     DefaultButton="Primary"
-    FullSizeDesired="False">
+    FullSizeDesired="False"
+    MinWidth="640"
+    MaxWidth="760"
+    HorizontalContentAlignment="Stretch">
 
-    <ScrollViewer VerticalScrollBarVisibility="Auto" MaxHeight="700">
-    <StackPanel Spacing="{StaticResource SpacingM}" Padding="0,0,0,4">
+    <ScrollViewer VerticalScrollBarVisibility="Auto" MaxHeight="680">
+    <StackPanel Spacing="{StaticResource SpacingL}" Padding="{StaticResource PadL}">
 
         <!-- ── Form fields ────────────────────────────────────────────────── -->
 
-        <StackPanel Spacing="{StaticResource SpacingS}">
-            <TextBlock Text="Game name" Style="{StaticResource BodyTextStyle}" FontWeight="SemiBold"/>
-            <TextBox
-                x:Name="GameNameTextBox"
-                PlaceholderText="Game name"
-                TextWrapping="NoWrap"
-                Height="40"/>
-        </StackPanel>
+        <Grid ColumnSpacing="{StaticResource SpacingM}">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
 
-        <StackPanel Spacing="{StaticResource SpacingS}">
-            <TextBlock Text="Offender name" Style="{StaticResource BodyTextStyle}" FontWeight="SemiBold"/>
-            <TextBox
-                x:Name="OffenderNameTextBox"
-                PlaceholderText="Offender name"
-                TextWrapping="NoWrap"
-                Height="40"/>
-        </StackPanel>
+            <StackPanel Grid.Column="0" Spacing="{StaticResource SpacingS}">
+                <TextBlock Text="Game name" Style="{StaticResource BodyTextStyle}" FontWeight="SemiBold"/>
+                <TextBox
+                    x:Name="GameNameTextBox"
+                    PlaceholderText="Game name"
+                    TextWrapping="NoWrap"
+                    Height="40"/>
+            </StackPanel>
+
+            <StackPanel Grid.Column="1" Spacing="{StaticResource SpacingS}">
+                <TextBlock Text="Offender name" Style="{StaticResource BodyTextStyle}" FontWeight="SemiBold"/>
+                <TextBox
+                    x:Name="OffenderNameTextBox"
+                    PlaceholderText="Offender name"
+                    TextWrapping="NoWrap"
+                    Height="40"/>
+            </StackPanel>
+        </Grid>
 
         <StackPanel Spacing="{StaticResource SpacingS}">
             <TextBlock Text="Description" Style="{StaticResource BodyTextStyle}" FontWeight="SemiBold"/>

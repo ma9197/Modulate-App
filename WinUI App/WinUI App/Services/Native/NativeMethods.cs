@@ -8,10 +8,13 @@ namespace WinUI_App.Services
         public const int SW_HIDE = 0;
         public const int SW_SHOW = 5;
         public const int SW_RESTORE = 9;
+        public const int SW_SHOWNOACTIVATE = 4;
 
         public const int WM_APP = 0x8000;
         public const int WM_HOTKEY = 0x0312;
         public const int WM_COMMAND = 0x0111;
+        public const int WM_GETMINMAXINFO = 0x0024;
+        public const int GWLP_WNDPROC = -4;
 
         public const int WM_LBUTTONUP = 0x0202;
         public const int WM_RBUTTONUP = 0x0205;
@@ -24,6 +27,16 @@ namespace WinUI_App.Services
 
         [DllImport("user32.dll", SetLastError = true)]
         public static extern bool SetForegroundWindow(IntPtr hWnd);
+
+        [DllImport("user32.dll", SetLastError = true)]
+        public static extern bool SetWindowPos(
+            IntPtr hWnd,
+            IntPtr hWndInsertAfter,
+            int X,
+            int Y,
+            int cx,
+            int cy,
+            uint uFlags);
 
         [DllImport("user32.dll", SetLastError = true)]
         public static extern bool RegisterHotKey(IntPtr hWnd, int id, uint fsModifiers, uint vk);
@@ -86,6 +99,13 @@ namespace WinUI_App.Services
         public const uint TPM_RIGHTBUTTON = 0x0002;
         public const uint TPM_RETURNCMD = 0x0100;
         public const uint TPM_NONOTIFY = 0x0080;
+        public static readonly IntPtr HWND_TOPMOST = new IntPtr(-1);
+        public static readonly IntPtr HWND_NOTOPMOST = new IntPtr(-2);
+        public const uint SWP_NOSIZE = 0x0001;
+        public const uint SWP_NOMOVE = 0x0002;
+        public const uint SWP_NOACTIVATE = 0x0010;
+        public const uint SWP_SHOWWINDOW = 0x0040;
+        public const uint SWP_HIDEWINDOW = 0x0080;
 
         [StructLayout(LayoutKind.Sequential)]
         public struct POINT
@@ -110,6 +130,25 @@ namespace WinUI_App.Services
         }
 
         public delegate IntPtr WndProc(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct MINMAXINFO
+        {
+            public POINT ptReserved;
+            public POINT ptMaxSize;
+            public POINT ptMaxPosition;
+            public POINT ptMinTrackSize;
+            public POINT ptMaxTrackSize;
+        }
+
+        [DllImport("user32.dll", SetLastError = true)]
+        public static extern IntPtr SetWindowLongPtrW(IntPtr hWnd, int nIndex, IntPtr dwNewLong);
+
+        [DllImport("user32.dll", SetLastError = true)]
+        public static extern IntPtr GetWindowLongPtrW(IntPtr hWnd, int nIndex);
+
+        [DllImport("user32.dll")]
+        public static extern IntPtr CallWindowProcW(IntPtr lpPrevWndFunc, IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
     }
 }
 

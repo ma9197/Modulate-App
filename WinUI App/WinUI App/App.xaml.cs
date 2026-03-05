@@ -1,4 +1,4 @@
-﻿using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml;
 using WinUI_App.Services;
 using System;
 
@@ -15,6 +15,7 @@ namespace WinUI_App
         private Window? _window;
         public static MainWindow? MainWindowInstance { get; private set; }
         public static TrayHotkeyController? TrayHotkeys { get; private set; }
+        public static OverlayStatusService? Overlay { get; private set; }
 
         public static AppSettings Settings { get; } = new AppSettings();
         public static ToastService Toasts { get; } = new ToastService();
@@ -35,6 +36,9 @@ namespace WinUI_App
         /// <param name="args">Details about the launch request and process.</param>
         protected override void OnLaunched(Microsoft.UI.Xaml.LaunchActivatedEventArgs args)
         {
+            // Apply persisted microphone preference before tray/hotkey actions can start recording.
+            Recording.Capture.SetPreferredMicrophoneDevice(Settings.PreferredMicrophoneDeviceNumber);
+
             _window = new MainWindow();
             MainWindowInstance = _window as MainWindow;
 
@@ -46,6 +50,8 @@ namespace WinUI_App
                 try
                 {
                     TrayHotkeys = new TrayHotkeyController(MainWindowInstance);
+                    Overlay = new OverlayStatusService(MainWindowInstance, Recording);
+                    Overlay.Start();
                 }
                 catch (Exception ex)
                 {

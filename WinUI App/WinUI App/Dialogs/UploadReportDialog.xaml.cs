@@ -61,6 +61,27 @@ namespace WinUI_App.Dialogs
 
         // ── Public API ───────────────────────────────────────────────────────────
 
+        /// <summary>
+        /// Call with true immediately after ShowAsync() to disable submit/trim while media
+        /// is being materialized in the background.  Call with false once SetMediaFiles()
+        /// has been called to unlock the dialog for the user.
+        /// </summary>
+        public void SetLoadingState(bool isLoading)
+        {
+            IsPrimaryButtonEnabled   = !isLoading;
+            IsSecondaryButtonEnabled = !isLoading;
+
+            if (isLoading)
+            {
+                ClipSummaryText.Text    = "Preparing clip\u2026";
+                EditClipButton.IsEnabled = false;
+            }
+            else if (!string.IsNullOrEmpty(_desktopAudioPath))
+            {
+                EditClipButton.IsEnabled = true;
+            }
+        }
+
         public void SetInitialValues(
             string? gameName,
             string? offenderName,

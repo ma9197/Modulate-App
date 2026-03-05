@@ -159,6 +159,7 @@ namespace WinUI_App.Services
                 if (ok)
                 {
                     App.Toasts.Show("Flag saved", "Last 10 seconds captured");
+                    App.Overlay?.MarkFlagged();
                 }
                 else
                 {
@@ -221,6 +222,7 @@ namespace WinUI_App.Services
                     App.Recording.StopRecording();
                     App.Recording.CleanupTempFiles();
                     App.Recording.Dispose();
+                    App.Overlay?.Dispose();
                 }
                 catch { }
 

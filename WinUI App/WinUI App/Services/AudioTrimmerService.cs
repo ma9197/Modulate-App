@@ -1,13 +1,9 @@
 using System;
 using System.Collections.Generic;
-using System.Drawing;
-using System.Drawing.Imaging;
 using System.IO;
-using System.Linq;
 using System.Threading.Tasks;
 using NAudio.Wave;
 using SharpAvi;
-using SharpAvi.Codecs;
 using SharpAvi.Output;
 
 namespace WinUI_App.Services
@@ -121,6 +117,11 @@ namespace WinUI_App.Services
         /// a new AVI to <paramref name="destPath"/>.
         /// Returns <paramref name="destPath"/> on success, null on failure.
         /// </summary>
+        /// <summary>
+        /// Zero-decode trim: extracts the JPEG frame range from the source AVI
+        /// and writes the raw JPEG bytes directly into a new MJPEG AVI.
+        /// No Bitmap decode, no BGR32 conversion, no re-encode.
+        /// </summary>
         public static string? TrimAvi(
             string sourcePath,
             double startSec,
@@ -133,35 +134,27 @@ namespace WinUI_App.Services
             try
             {
                 var startFrame = (int)Math.Floor(startSec * fps);
-                var endFrame = (int)Math.Ceiling(endSec * fps);
+                var endFrame   = (int)Math.Ceiling(endSec * fps);
 
                 var frames = ReadJpegFramesFromAvi(sourcePath);
                 if (frames.Count == 0) return null;
 
                 startFrame = Math.Max(0, Math.Min(startFrame, frames.Count - 1));
-                endFrame = Math.Max(startFrame + 1, Math.Min(endFrame, frames.Count));
+                endFrame   = Math.Max(startFrame + 1, Math.Min(endFrame, frames.Count));
 
                 using var aviWriter = new AviWriter(destPath)
                 {
                     FramesPerSecond = fps,
-                    EmitIndex1 = true
+                    EmitIndex1      = true
                 };
 
-                var videoStream = aviWriter.AddMJpegWpfVideoStream(width, height, quality: 70);
+                var stream   = aviWriter.AddVideoStream(width, height, BitsPerPixel.Bpp24);
+                stream.Codec = new FourCC("MJPG");
 
                 for (var i = startFrame; i < endFrame; i++)
                 {
                     var jpeg = frames[i];
-                    using var ms = new MemoryStream(jpeg);
-                    using var sourceBitmap = new Bitmap(ms);
-                    using var frameBitmap = new Bitmap(width, height, PixelFormat.Format32bppRgb);
-                    using (var g = Graphics.FromImage(frameBitmap))
-                    {
-                        g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBilinear;
-                        g.DrawImage(sourceBitmap, 0, 0, width, height);
-                    }
-                    var frameData = BitmapToBgr32Tight(frameBitmap);
-                    videoStream.WriteFrame(true, frameData, 0, frameData.Length);
+                    stream.WriteFrame(true, jpeg, 0, jpeg.Length);
                 }
 
                 return destPath;
@@ -220,30 +213,5 @@ namespace WinUI_App.Services
             return frames;
         }
 
-        private static byte[] BitmapToBgr32Tight(Bitmap bitmap)
-        {
-            var rect = new Rectangle(0, 0, bitmap.Width, bitmap.Height);
-            var bitmapData = bitmap.LockBits(rect, ImageLockMode.ReadOnly, PixelFormat.Format32bppRgb);
-            var expectedStride = bitmap.Width * 4;
-            var srcStride = bitmapData.Stride;
-            var bytes = new byte[expectedStride * bitmap.Height];
-
-            if (srcStride == expectedStride)
-            {
-                System.Runtime.InteropServices.Marshal.Copy(bitmapData.Scan0, bytes, 0, bytes.Length);
-            }
-            else
-            {
-                var srcBase = bitmapData.Scan0;
-                for (var y = 0; y < bitmap.Height; y++)
-                {
-                    var srcRow = IntPtr.Add(srcBase, y * srcStride);
-                    System.Runtime.InteropServices.Marshal.Copy(srcRow, bytes, y * expectedStride, expectedStride);
-                }
-            }
-
-            bitmap.UnlockBits(bitmapData);
-            return bytes;
-        }
     }
 }

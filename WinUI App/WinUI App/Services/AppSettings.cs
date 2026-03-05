@@ -32,6 +32,18 @@ namespace WinUI_App.Services
             set => SetBool(nameof(HasShownRunningInBackgroundToast), value);
         }
 
+        public bool OverlayEnabled
+        {
+            get => GetBool(nameof(OverlayEnabled), defaultValue: true);
+            set => SetBool(nameof(OverlayEnabled), value);
+        }
+
+        public string OverlayPosition
+        {
+            get => GetString(nameof(OverlayPosition), "TopRight");
+            set => SetString(nameof(OverlayPosition), value);
+        }
+
         public HotkeyBinding HotkeyStartStop
         {
             get => GetHotkey(nameof(HotkeyStartStop), new HotkeyBinding(HotkeyModifiers.Control | HotkeyModifiers.Shift, VirtualKey.R, Enabled: true));
@@ -48,6 +60,16 @@ namespace WinUI_App.Services
         {
             get => GetHotkey(nameof(HotkeyOpenApp), new HotkeyBinding(HotkeyModifiers.Control | HotkeyModifiers.Shift, VirtualKey.O, Enabled: false));
             set => SetHotkey(nameof(HotkeyOpenApp), value);
+        }
+
+        /// <summary>
+        /// Preferred microphone device number (NAudio WaveIn index).
+        /// -1 means "default system microphone".
+        /// </summary>
+        public int PreferredMicrophoneDeviceNumber
+        {
+            get => GetInt(nameof(PreferredMicrophoneDeviceNumber), -1);
+            set => SetInt(nameof(PreferredMicrophoneDeviceNumber), value);
         }
 
         private bool GetBool(string key, bool defaultValue)
@@ -89,6 +111,43 @@ namespace WinUI_App.Services
                 _container.Values[key] = HotkeyBinding.ToDisplayString(value.Modifiers, value.Key) + (value.Enabled ? "" : " (disabled)");
             }
             catch { }
+        }
+
+        private string GetString(string key, string defaultValue)
+        {
+            try
+            {
+                if (_container.Values.TryGetValue(key, out var val) && val is string s && !string.IsNullOrWhiteSpace(s))
+                {
+                    return s;
+                }
+            }
+            catch { }
+            return defaultValue;
+        }
+
+        private void SetString(string key, string value)
+        {
+            try { _container.Values[key] = value; } catch { }
+        }
+
+        private int GetInt(string key, int defaultValue)
+        {
+            try
+            {
+                if (_container.Values.TryGetValue(key, out var val))
+                {
+                    if (val is int i) return i;
+                    if (val is string s && int.TryParse(s, out var parsed)) return parsed;
+                }
+            }
+            catch { }
+            return defaultValue;
+        }
+
+        private void SetInt(string key, int value)
+        {
+            try { _container.Values[key] = value; } catch { }
         }
     }
 }

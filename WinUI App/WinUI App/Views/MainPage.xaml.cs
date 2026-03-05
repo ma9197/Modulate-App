@@ -34,6 +34,7 @@ namespace WinUI_App.Views
         private DispatcherTimer? _snackbarTimer;
         private string _currentViewTag = "record";
         private bool _subscribedToAppEvents;
+        private bool _isPopulatingMicrophones;
 
         public MainPage()
         {
@@ -134,6 +135,7 @@ namespace WinUI_App.Views
         {
             try
             {
+                RefreshNotificationModeUi();
                 // Keep it short; snackbar is already used as the app's status surface.
                 ShowStatus($"{title}: {body}", InfoBarSeverity.Informational);
             }
@@ -338,56 +340,60 @@ namespace WinUI_App.Views
                 return;
             }
 
-            // Capture the current moment
             var recordingStartUtc = _captureService.RecordingStartTime;
             _flagTime = DateTime.UtcNow;
-            
-            // Save current recording and immediately restart
-            var savedFiles = await CaptureClipAsync();
-            if (savedFiles.audioPath == null && savedFiles.micPath == null && savedFiles.videoPath == null)
+
+            // 1. Open the dialog immediately so the user can start filling in fields
+            //    while media is being built in the background.
+            var dialog = new UploadReportDialog { XamlRoot = this.XamlRoot };
+            dialog.SetLoadingState(true);
+            var dialogTask = dialog.ShowAsync();
+
+            // 2. Snapshot the rolling buffers (microseconds — recording continues)
+            var snap = App.Recording.SnapshotClip();
+
+            // 3. Encode WAV + AVI on a background thread
+            var (audioPath, micPath, aviPath, durationSec) = await App.Recording.MaterializeClipAsync(snap);
+
+            if (audioPath == null)
             {
                 var debug = "Failed to capture clip.";
                 if (!string.IsNullOrEmpty(_captureService.LastVideoError))
-                {
                     debug += $" LastVideoError={_captureService.LastVideoError}";
-                }
+
+                dialog.Hide();
+                await dialogTask;
                 ShowStatus(debug, InfoBarSeverity.Error);
                 return;
             }
 
-            // Show upload dialog
-            var dialog = new UploadReportDialog
-            {
-                XamlRoot = this.XamlRoot
-            };
+            // 4. Arm the dialog with the real file paths (dialog is still open)
+            var actualDuration = durationSec > 0 ? durationSec : GetCapturedDurationSec(audioPath);
+            dialog.SetMediaFiles(audioPath, micPath, actualDuration);
+            dialog.SetLoadingState(false);
 
-            var capturedDurationSec = GetCapturedDurationSec(savedFiles.audioPath);
-            dialog.SetMediaFiles(savedFiles.audioPath, savedFiles.micPath, capturedDurationSec);
-
-            var result = await dialog.ShowAsync();
+            // 5. Wait for user decision
+            var result    = await dialogTask;
+            var clipFiles = (audioPath, micPath, aviPath);
 
             if (result == ContentDialogResult.Primary)
             {
-                // Apply user's trim selection before upload
-                var trimmedFiles = await ApplyTrimAsync(savedFiles, dialog.TrimStartSec, dialog.TrimEndSec);
+                var trimmedFiles    = await ApplyTrimAsync(clipFiles, dialog.TrimStartSec, dialog.TrimEndSec);
                 var clipDurationSec = dialog.TrimEndSec - dialog.TrimStartSec;
 
                 await SubmitReportAsync(
-                    dialog.GameName,
-                    dialog.OffenderName,
-                    dialog.Description,
-                    dialog.Targeted,
-                    dialog.DesiredAction,
-                    trimmedFiles,
-                    _flagTime,
-                    recordingStartUtc,
-                    clipDurationSec);
+                    dialog.GameName, dialog.OffenderName, dialog.Description,
+                    dialog.Targeted, dialog.DesiredAction,
+                    trimmedFiles, _flagTime, recordingStartUtc, clipDurationSec);
             }
             else if (result == ContentDialogResult.Secondary)
             {
-                // Apply trim then save for later
-                var trimmedFiles = await ApplyTrimAsync(savedFiles, dialog.TrimStartSec, dialog.TrimEndSec);
-                var saved = SavePendingReport(trimmedFiles, dialog.GameName, dialog.OffenderName, dialog.Description, dialog.Targeted, dialog.DesiredAction, _flagTime, recordingStartUtc);
+                var trimmedFiles = await ApplyTrimAsync(clipFiles, dialog.TrimStartSec, dialog.TrimEndSec);
+                var saved = SavePendingReport(
+                    trimmedFiles, dialog.GameName, dialog.OffenderName,
+                    dialog.Description, dialog.Targeted, dialog.DesiredAction,
+                    _flagTime, recordingStartUtc);
+
                 if (saved)
                 {
                     ShowStatus("Saved for later.", InfoBarSeverity.Success);
@@ -401,12 +407,11 @@ namespace WinUI_App.Views
             }
             else
             {
-                // User clicked Cancel - delete the saved files
-                CancelUpload(savedFiles);
+                CancelUpload(clipFiles);
             }
         }
 
-        private void FlagForLaterButton_Click(object sender, RoutedEventArgs e)
+        private async void FlagForLaterButton_Click(object sender, RoutedEventArgs e)
         {
             if (!_captureService.IsRecording)
             {
@@ -414,16 +419,19 @@ namespace WinUI_App.Views
                 return;
             }
 
-            _ = SavePendingFromCaptureAsync();
-        }
+            // Immediately gray out buttons + show loading ring so the user has feedback
+            SetCaptureBusy(true);
+            ShowStatus("Saving flag\u2026", InfoBarSeverity.Informational);
 
-        private async System.Threading.Tasks.Task SavePendingFromCaptureAsync()
-        {
             var (ok, err) = await App.Recording.FlagToPendingAsync();
+
+            SetCaptureBusy(false);
+
             if (ok)
             {
                 ShowStatus("Saved for later.", InfoBarSeverity.Success);
                 App.Toasts.Show("Flag saved", "Last 30 seconds captured");
+                App.Overlay?.MarkFlagged();
                 LoadPendingReports();
             }
             else
@@ -437,12 +445,32 @@ namespace WinUI_App.Views
         {
             try
             {
-                MinimizeToTrayToggle.IsOn = App.Settings.MinimizeToTray;
-                CloseExitsToggle.IsOn = App.Settings.CloseButtonExitsApp;
+                MinimizeToTrayToggle.IsOn  = App.Settings.MinimizeToTray;
+                CloseExitsToggle.IsOn      = App.Settings.CloseButtonExitsApp;
+                OverlayEnabledToggle.IsOn  = App.Settings.OverlayEnabled;
+                OverlayPositionRow.Opacity = App.Settings.OverlayEnabled ? 1.0 : 0.4;
+                OverlayPositionRow.IsHitTestVisible = App.Settings.OverlayEnabled;
+                SelectOverlayPosition(App.Settings.OverlayPosition);
+                RefreshMicrophoneDeviceUi();
 
                 RefreshHotkeyLabels();
+                RefreshNotificationModeUi();
             }
             catch { }
+        }
+
+        private void RefreshNotificationModeUi()
+        {
+            if (App.Toasts.IsAvailable)
+            {
+                NotificationModeText.Text = "Notification mode: Windows system toasts";
+                NotificationModeHintText.Text = "Bottom-right Windows notifications are enabled for this app.";
+            }
+            else
+            {
+                NotificationModeText.Text = "Notification mode: Fallback (no Windows toast registration)";
+                NotificationModeHintText.Text = "Likely running unpackaged/debug. Tray balloons and in-app snackbar are used instead.";
+            }
         }
 
         private void RefreshHotkeyLabels()
@@ -460,6 +488,137 @@ namespace WinUI_App.Views
         private void CloseExitsToggle_Toggled(object sender, RoutedEventArgs e)
         {
             App.Settings.CloseButtonExitsApp = CloseExitsToggle.IsOn;
+        }
+
+        private void OverlayEnabledToggle_Toggled(object sender, RoutedEventArgs e)
+        {
+            var enabled = OverlayEnabledToggle.IsOn;
+            App.Settings.OverlayEnabled = enabled;
+
+            // Dim the position picker when overlay is off
+            OverlayPositionRow.Opacity = enabled ? 1.0 : 0.4;
+            OverlayPositionRow.IsHitTestVisible = enabled;
+
+            App.Overlay?.RefreshVisibility();
+        }
+
+        private void OverlayPositionCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (OverlayPositionCombo.SelectedItem is ComboBoxItem item &&
+                item.Tag is string position &&
+                !string.IsNullOrWhiteSpace(position))
+            {
+                App.Settings.OverlayPosition = position;
+                App.Overlay?.ApplyPositionFromSettings();
+            }
+        }
+
+        private void SelectOverlayPosition(string position)
+        {
+            foreach (var obj in OverlayPositionCombo.Items)
+            {
+                if (obj is ComboBoxItem item && item.Tag is string tag &&
+                    string.Equals(tag, position, StringComparison.OrdinalIgnoreCase))
+                {
+                    OverlayPositionCombo.SelectedItem = item;
+                    return;
+                }
+            }
+        }
+
+        private void RefreshMicrophoneDeviceUi()
+        {
+            _isPopulatingMicrophones = true;
+            try
+            {
+                MicrophoneDeviceCombo.Items.Clear();
+
+                // Always provide a safe fallback option.
+                MicrophoneDeviceCombo.Items.Add(new ComboBoxItem
+                {
+                    Content = "Default system microphone",
+                    Tag = -1
+                });
+
+                var devices = CaptureService.GetMicrophoneDevices();
+                foreach (var device in devices)
+                {
+                    MicrophoneDeviceCombo.Items.Add(new ComboBoxItem
+                    {
+                        Content = $"[{device.DeviceNumber}] {device.Name}",
+                        Tag = device.DeviceNumber
+                    });
+                }
+
+                var preferred = App.Settings.PreferredMicrophoneDeviceNumber;
+                if (preferred >= 0 && !devices.Any(d => d.DeviceNumber == preferred))
+                {
+                    preferred = -1;
+                    App.Settings.PreferredMicrophoneDeviceNumber = -1;
+                }
+
+                // Apply persisted setting to capture service.
+                App.Recording.Capture.SetPreferredMicrophoneDevice(preferred);
+                SelectMicrophoneDevice(preferred);
+            }
+            finally
+            {
+                _isPopulatingMicrophones = false;
+            }
+        }
+
+        private void SelectMicrophoneDevice(int deviceNumber)
+        {
+            foreach (var obj in MicrophoneDeviceCombo.Items)
+            {
+                if (obj is ComboBoxItem item && item.Tag is int tag && tag == deviceNumber)
+                {
+                    MicrophoneDeviceCombo.SelectedItem = item;
+                    return;
+                }
+            }
+
+            // Fallback to "Default system microphone"
+            foreach (var obj in MicrophoneDeviceCombo.Items)
+            {
+                if (obj is ComboBoxItem item && item.Tag is int tag && tag == -1)
+                {
+                    MicrophoneDeviceCombo.SelectedItem = item;
+                    return;
+                }
+            }
+        }
+
+        private void MicrophoneDeviceCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (_isPopulatingMicrophones)
+            {
+                return;
+            }
+
+            if (_captureService.IsRecording)
+            {
+                // Enforce "cannot change microphone while recording".
+                ShowStatus("Stop recording before changing microphone.", InfoBarSeverity.Warning);
+                SelectMicrophoneDevice(App.Settings.PreferredMicrophoneDeviceNumber);
+                return;
+            }
+
+            if (MicrophoneDeviceCombo.SelectedItem is not ComboBoxItem item || item.Tag is not int deviceNumber)
+            {
+                return;
+            }
+
+            if (!App.Recording.Capture.SetPreferredMicrophoneDevice(deviceNumber))
+            {
+                ShowStatus("Failed to change microphone device.", InfoBarSeverity.Error);
+                SelectMicrophoneDevice(App.Settings.PreferredMicrophoneDeviceNumber);
+                return;
+            }
+
+            App.Settings.PreferredMicrophoneDeviceNumber = deviceNumber;
+            var label = item.Content?.ToString() ?? "Selected microphone";
+            ShowStatus($"Microphone set: {label}", InfoBarSeverity.Informational);
         }
 
         private async void ChangeStartStopHotkey_Click(object sender, RoutedEventArgs e)
@@ -589,20 +748,6 @@ namespace WinUI_App.Views
                 }
             }
             catch { }
-        }
-
-        private async System.Threading.Tasks.Task<(string? audioPath, string? micPath, string? videoPath)> CaptureClipAsync()
-        {
-            try
-            {
-                SetCaptureBusy(true);
-                var (audioPath, micPath, videoPath, _) = await App.Recording.CaptureClipAsync();
-                return (audioPath, micPath, videoPath);
-            }
-            finally
-            {
-                SetCaptureBusy(false);
-            }
         }
 
         /// <summary>
@@ -859,6 +1004,8 @@ namespace WinUI_App.Views
                     totalBytes += videoSize;
                 }
 
+                // Upload sequentially (one in-flight upload at a time).
+                // Some storage policies/tokens are order-sensitive and reject parallel writes.
                 var uploadedBase = 0L;
                 UpdateUploadProgress(0);
 
@@ -876,7 +1023,6 @@ namespace WinUI_App.Views
                     });
                 }
 
-                // Upload system audio
                 var (audioUploadSuccess, audioUploadError) = await _reportsClient.UploadToSignedUrlAsync(
                     initResult.AudioUploadUrl,
                     systemAudioPath,
@@ -892,7 +1038,6 @@ namespace WinUI_App.Views
                 }
                 uploadedBase += systemAudioSize;
 
-                // Upload microphone audio if present
                 if (hasMic && initResult.MicrophoneUploadUrl != null)
                 {
                     var (micUploadSuccess, micUploadError) = await _reportsClient.UploadToSignedUrlAsync(
@@ -911,7 +1056,6 @@ namespace WinUI_App.Views
                     uploadedBase += micSize;
                 }
 
-                // Upload video if present
                 if (hasVideo && initResult.VideoUploadUrl != null)
                 {
                     var (videoUploadSuccess, videoUploadError) = await _reportsClient.UploadToSignedUrlAsync(
@@ -1087,25 +1231,28 @@ namespace WinUI_App.Views
 
         private async System.Threading.Tasks.Task OpenPendingItemAsync(PendingReportItem item)
         {
-            var dialog = new UploadReportDialog
-            {
-                XamlRoot = this.XamlRoot
-            };
+            var savedFiles = ResolvePendingFiles(item);
+
+            var dialog = new UploadReportDialog { XamlRoot = this.XamlRoot };
             dialog.SetInitialValues(item.GameName, item.OffenderName, item.Description, item.Targeted, item.DesiredAction);
 
+            // Arm the trimmer with the existing on-disk clip — no loading state needed
+            var clipDuration = GetCapturedDurationSec(savedFiles.audioPath);
+            dialog.SetMediaFiles(savedFiles.audioPath, savedFiles.micPath, clipDuration);
+
             var result = await dialog.ShowAsync();
+
             if (result == ContentDialogResult.Primary)
             {
-                var savedFiles = ResolvePendingFiles(item);
+                // Apply trim if the user adjusted the handles
+                var trimmedFiles    = await ApplyTrimAsync(savedFiles, dialog.TrimStartSec, dialog.TrimEndSec);
+                var clipDurationSec = dialog.TrimEndSec - dialog.TrimStartSec;
+
                 var success = await SubmitReportAsync(
-                    dialog.GameName,
-                    dialog.OffenderName,
-                    dialog.Description,
-                    dialog.Targeted,
-                    dialog.DesiredAction,
-                    savedFiles,
-                    item.FlagUtc,
-                    item.RecordingStartUtc);
+                    dialog.GameName, dialog.OffenderName, dialog.Description,
+                    dialog.Targeted, dialog.DesiredAction,
+                    trimmedFiles, item.FlagUtc, item.RecordingStartUtc,
+                    clipDurationSec);
 
                 if (success)
                 {
@@ -1114,11 +1261,11 @@ namespace WinUI_App.Views
             }
             else if (result == ContentDialogResult.Secondary)
             {
-                item.Description = dialog.Description;
-                item.Targeted = dialog.Targeted;
+                item.GameName      = dialog.GameName;
+                item.OffenderName  = dialog.OffenderName;
+                item.Description   = dialog.Description;
+                item.Targeted      = dialog.Targeted;
                 item.DesiredAction = dialog.DesiredAction;
-                item.GameName = dialog.GameName;
-                item.OffenderName = dialog.OffenderName;
 
                 var items = _pendingStore.Load();
                 _pendingStore.SaveItem(items, item);
@@ -1323,11 +1470,16 @@ namespace WinUI_App.Views
         {
             LoadingRing.IsActive = _isUploading || _isCapturingClip;
             var allowActions = !_isUploading && !_isCapturingClip;
+            var canChangeMicrophone = allowActions && !_captureService.IsRecording;
 
             RecordToggleButton.IsEnabled = allowActions;
             FlagForLaterButton.IsEnabled = allowActions && _captureService.IsRecording;
             ReportNowButton.IsEnabled = allowActions && _captureService.IsRecording;
             PendingReportsListView.IsEnabled = allowActions;
+            MicrophoneDeviceCombo.IsEnabled = canChangeMicrophone;
+            MicrophoneDeviceHintText.Text = _captureService.IsRecording
+                ? "Stop recording before changing microphone."
+                : "Select the microphone used for capture.";
         }
 
         private void UpdateRecordingUi()
